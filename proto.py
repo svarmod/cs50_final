@@ -5,19 +5,56 @@ from ttkthemes import ThemedTk
 import os
 import ctypes
 
+from cs50 import SQL
 
+
+DB_FILENAME = "test.db"
+DB_FILEPATH = os.path.dirname(os.path.realpath(__file__)) + "\\" + DB_FILENAME
 
 SCREEN_W = ctypes.windll.user32.GetSystemMetrics(0)
 SCREEN_H = ctypes.windll.user32.GetSystemMetrics(1)
 
-WND_W = 600
+WND_W = 700
 WND_H = 400
 
 FONT_FAMILY = "Cascadia Code"
+DICT_ALTBGCOLOR = "#c7a8ff"
+DICT_BGCOLOR = "#fff"
 
 PAGES = dict()
 
+
 def main():
+
+	#Preparind database
+	if not os.access(DB_FILEPATH, os.R_OK):
+		open(DB_FILEPATH, 'w').close()
+	db = SQL("sqlite:///" + DB_FILEPATH)
+	if len(db.execute('SELECT name FROM sqlite_master WHERE type="table" AND name="english"')) != 1:
+		# Create dictionary table
+		db.execute('CREATE TABLE english (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, word TEXT NOT NULL, translation TEXT DEFAULT "", rating REAL DEFAULT 0.0, seq TEXT DEFAULT "", info TEXT DEFAULT "")')
+		# Insert test data
+		db.execute('INSERT INTO english(word, translation) VALUES ("cat", "кошка")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("dog", "собака")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("transient", "переходящий,временный")')
+		# db.execute('INSERT INTO english(word, translation) VALUES ("transient", "переходящий,временный,скоротечный,мимолетный")')
+
+		db.execute('INSERT INTO english(word, translation) VALUES ("roof", "крыша")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("ball", "мяч")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("wall", "стена")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("fly", "летать,муха")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("hello", "привет")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("piano", "пианино")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("ear", "ухо")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("jorney", "путешествие,поездка")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("zoo", "зоопарк")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("weather", "погода")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("apple", "яблоко")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("potato", "картошка")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("onion", "лук")')
+		db.execute('INSERT INTO english(word, translation) VALUES ("extermination", "уничтожение")')
+
+
 	root = ThemedTk(theme="plastik")
 	root.resizable(False, False)
 	root.geometry("{}x{}+{}+{}".format(WND_W, WND_H, (SCREEN_W - WND_W) // 2, (SCREEN_H - WND_H) // 2))
@@ -28,6 +65,9 @@ def main():
 	style.configure('TFrame', background = '#ab23ff')
 	style.configure('page.TButton', background = '#ab23ff', font=(FONT_FAMILY, 14, "bold"))
 	style.configure('common.TButton', font=(FONT_FAMILY, 12, "bold"))
+	style.configure('dict.TButton', font=("Helvetica", 8, "bold"), width=3)
+	style.configure('alt_dict.TButton', font=("Helvetica", 8, "bold"), width=3)
+
 
 	# Generate main components
 	f_header = ttk.Frame(root, height=60, relief=SOLID)
@@ -42,10 +82,10 @@ def main():
 	f_content.pack(fill=BOTH, expand=True)
 
 	# Create pages and it to global dictionary
-	PAGES.update({"exam": ExamPage(f_content, f_buttons)})
-	PAGES.update({"dict": DictPage(f_content, f_buttons)})
+	PAGES.update({"exam": ExamPage(f_content, f_buttons, db)})
+	PAGES.update({"dict": DictPage(f_content, f_buttons, db)})
 	# And show first page after
-	showPage("exam")
+	showPage("dict")
 
 
 
@@ -57,7 +97,10 @@ def main():
 
 
 class ExamPage:
-	def __init__(self, f_content, f_buttons):
+	def __init__(self, f_content, f_buttons, db):
+
+		self.db = db
+
 		self.parent = f_content
 		# self.buttons = f_buttons
 		self.page_button = generateButton(f_buttons, "exam")
@@ -113,8 +156,8 @@ class ExamPage:
 		self.rating_value.pack(side="right", expand=True, anchor="w", padx=(0,0))
 
 		# PACKING
-		# self.start_page.pack(fill=BOTH, expand=True)
-		self.quiz_page.pack(fill=BOTH, expand=True)
+		self.start_page.pack(fill=BOTH, expand=True)
+		# self.quiz_page.pack(fill=BOTH, expand=True)
 
 
 	def onShown(self):
@@ -130,7 +173,11 @@ class ExamPage:
 
 
 class DictPage:
-	def __init__(self, f_content, f_buttons):
+	def __init__(self, f_content, f_buttons, db):
+
+		self.db = db
+		self.DICT_LOADED = False
+
 		self.parent = f_content
 		# self.buttons = f_buttons
 		self.page_button = generateButton(f_buttons, "dict")
@@ -139,10 +186,9 @@ class DictPage:
 
 		
 		# DICT PAGE
-		self.DICTBGCOLOR = "#fff"
 		self.dictContainer = ttk.Frame(self.dict_page, padding=10)
 		self.scrollContainer = ttk.Frame(self.dictContainer, relief=SUNKEN, borderwidth=1)
-		self.scrollCanvas = Canvas(self.scrollContainer, height=80, bg=self.DICTBGCOLOR)
+		self.scrollCanvas = Canvas(self.scrollContainer, width=514, height=80, bg=DICT_BGCOLOR)
 		self.scrollBar = ttk.Scrollbar(self.scrollContainer, orient="vertical", command=self.scrollCanvas.yview)
 		self.scrollFrame = ttk.Frame(self.scrollCanvas)
 		self.scrollFrame.bind(
@@ -152,15 +198,18 @@ class DictPage:
 		self.scrollCanvas.create_window((0, 0), window=self.scrollFrame, anchor="nw")
 		self.scrollCanvas.configure(yscrollcommand=self.scrollBar.set)
 
-		self.dict_content = ttk.Label(self.scrollFrame, text="Loading...", wraplength=460, background=self.DICTBGCOLOR)
+		# self.dict_content = ttk.Label(self.scrollFrame, text="Loading...", wraplength=460, background=self.DICT_BGCOLOR)
 		self.add_button = ttk.Button(self.dictContainer, text="Add new word", takefocus=0, command=self.toggleDictionary, style="common.TButton")
+		self.reload_button = ttk.Button(self.dictContainer, text="Reload", takefocus=0, command=self.reloadDictionary, style="common.TButton")
 
 		self.scrollContainer.pack(fill=BOTH, expand=True)
-		self.scrollCanvas.pack(side="left", fill="both", expand=True)
-		self.scrollBar.pack(side="right", fill="y")
+		self.scrollCanvas.pack(side="left", fill=BOTH, expand=True)
+		self.scrollBar.pack(side="right", fill="y", expand=True)
 		self.add_button.pack(side="right", pady=(10, 0))
+		self.reload_button.pack(side="left", pady=(10, 0))
+
 		# CONTENT
-		self.dict_content.grid()
+		# self.dict_content.grid()
 
 		self.dictContainer.pack(fill=BOTH, expand=True)
 
@@ -171,6 +220,11 @@ class DictPage:
 		ttk.Button(self.addContainer, text="Save", takefocus=0, style="common.TButton").pack(side="right")
 
 	
+	def reloadDictionary(self):
+		slaves = self.scrollFrame.grid_slaves()
+		for i in slaves[:-5]:
+			i.destroy()
+		self.scrollFrame.after(1000, self.loadDictionary)
 
 
 	def toggleDictionary(self):
@@ -180,10 +234,72 @@ class DictPage:
 		else:
 			self.addContainer.pack_forget()
 			self.dictContainer.pack(fill=BOTH, expand=True)
+			self.onShown()
 
 
 	def onShown(self):
-		pass
+		if not self.DICT_LOADED:
+			self.loadDictionary()
+			self.DICT_LOADED = True
+
+
+	def loadDictionary(self):
+		# print(self.dict_content["text"])
+
+		self.data = self.db.execute("SELECT * FROM english ORDER BY word ASC")
+		print("Dictionary loaded!")
+
+		out = ''
+
+		ttk.Label(self.scrollFrame, text="Loading...", background=DICT_BGCOLOR)
+
+		ttk.Label(self.scrollFrame, text="№", background=DICT_BGCOLOR, font=("Helvetica", 10, "bold"), width=4, anchor="e").grid(row=0, column=0, 
+			padx=(0, 2), pady=(0, 10), sticky="nsew")
+
+		ttk.Label(self.scrollFrame, text="Word", background=DICT_BGCOLOR, font=("Helvetica", 10, "bold"), width=18, anchor="c").grid(row=0, column=1, 
+			padx=(0, 0), pady=(0, 10), sticky="nsew")
+
+		ttk.Label(self.scrollFrame, text="Translation", background=DICT_BGCOLOR, font=("Helvetica", 10, "bold"), width=18, anchor="c").grid(row=0, column=2, 
+			padx=(0, 0), pady=(0, 10), sticky="nsew")
+
+		ttk.Label(self.scrollFrame, text="Additional", background=DICT_BGCOLOR, wraplength=250, font=("Helvetica", 10, "bold"), width=20, anchor="c").grid(row=0, column=3, 
+			padx=(0, 0), pady=(0, 10), sticky="nsew")
+
+		ttk.Label(self.scrollFrame, text="Rating", background=DICT_BGCOLOR, font=("Helvetica", 10, "bold"), width=7, anchor="c").grid(row=0, column=4, padx=(0, 8), pady=(0, 10), sticky="nsew")
+
+		for i in range(len(self.data)):
+			translated = (self.data[i]['translation']).split(',')
+
+			color = DICT_ALTBGCOLOR if i % 2 else DICT_BGCOLOR
+			# style = "alt_dict.TButton" if i % 2 else "dict.TButton"
+
+			ttk.Label(self.scrollFrame, text=str(i + 1), background=color, anchor="e").grid(row=i + 1, column=0, 
+				padx=(0, 0), sticky="nsew")
+			ttk.Label(self.scrollFrame, text=str(self.data[i]['word']), background=color, anchor="c").grid(row=i + 1, column=1, 
+				padx=(0, 0), sticky="nsew")
+			ttk.Label(self.scrollFrame, text=translated[0], background=color, anchor="c").grid(row=i + 1, column=2, 
+				padx=(0, 0), sticky="nsew")
+			ttk.Label(self.scrollFrame, text=str(translated[1:]), background=color, wraplength=142, anchor="c").grid(row=i + 1, column=3, 
+				padx=(0, 0), sticky="nsew")
+			ttk.Label(self.scrollFrame, text=str(self.data[i]['rating']), background=color, anchor="c").grid(row=i + 1, column=4, 
+				padx=(0, 0), sticky="nsew")
+
+			ttk.Button(self.scrollFrame, text="...", takefocus=0, style="dict.TButton", command=lambda row=i+1, id=self.data[i]['id']: self.editEntry(row, id)).grid(row = i + 1, column=5, sticky="e")
+			
+
+
+
+
+	# TABLE english
+	# id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
+	# word TEXT NOT NULL, 
+	# translation TEXT DEFAULT "", 
+	# rating REAL DEFAULT 0.0, 
+	# seq TEXT DEFAULT "", 
+	# info TEXT DEFAULT ""
+
+	def editEntry(self, row, id):
+		print("Edit row: " + str(row) + ",  id " + str(id) + " word : " + self.data[row - 1].get("word"))
 
 
 	def get(self):
@@ -216,53 +332,6 @@ def showPage(name):
 
 
 
-
-
-
-		# text = "CATERPILLARIZATION"
-
-		# fSize = 20 + 50 // len(text)
-		# lWord = ttk.Label(PAGES[0], text=text, anchor="c", font=(FONT_FAMILY, fSize))
-		# lAnswer = ttk.Label(PAGES[0], text="Guess:", width=6, anchor="e", font=(FONT_FAMILY, 14))
-		# eAnswer = ttk.Entry(PAGES[0], width=20, font=(FONT_FAMILY, 18), justify="center")
-		# bCheck = ttk.Button(PAGES[0], text="Check", takefocus=0)
-		# fStats = ttk.Frame(PAGES[0]) #, relief=SOLID, height=40)
-
-		# lRatingWord = ttk.Label(fStats, text="Rating:", width=7, anchor="e", font=(FONT_FAMILY, 10))
-		# lRatingValue = ttk.Label(fStats, text="20.0", width=4, anchor="w", font=(FONT_FAMILY, 10, "bold"))
-
-
-		# fStats.pack(side="top", anchor="n", pady=(0, 0), fill=X)
-		# lWord.pack(side="top", pady=(30, 0))#B143FFFF
-		# bCheck.pack(side="bottom", anchor="n", pady=(0, 40))
-		# lAnswer.pack(side="left", anchor="w")
-		# eAnswer.pack(side="left", anchor="w", padx=(10, 10))
-
-		# lRatingWord.pack(side="left", expand=True, anchor="e")
-		# lRatingValue.pack(side="right", expand=True, anchor="w", padx=(0,0))
-
-
-
-# def toggleDictionary():
-# 	if (PAGES_ADD["add"].winfo_viewable()):
-# 		PAGES_ADD["add"].pack_forget()
-# 		PAGES[1].pack(fill=BOTH, expand=True)
-# 	else:
-# 		PAGES[1].pack_forget()
-# 		PAGES_ADD["add"].pack(side="top", fill=BOTH, expand=True)
-
-
-
-
-
-# def changePage(s):
-# 	for i in range(len(PAGES)):
-# 		if PAGES[i].winfo_viewable():
-# 			PAGES[i].pack_forget()
-# 			BUTTONS[i].state(["!disabled"])
-# 			break	
-# 	s.pack(fill=BOTH, expand=True)
-# 	BUTTONS[PAGES.index(s)].state(["disabled"])
 
 
 
