@@ -18,6 +18,10 @@ INFO_CALLBACK = None
 LANG_FROM = ENG
 LANG_TO = RUS
 
+OPTIONS = {1: {"min": 0.0, "max": 10.0},
+           2: {"min": 5.0, "max": 15.0},
+           3: {"min": 0.0, "max": 20.0}}
+
 
 def main():
 
@@ -57,6 +61,16 @@ def main():
 
 	style.configure('option.TButton', font=(FONT_MAIN, 10, "bold"), width=16)
 	style.map('option.TButton', foreground=[('disabled', '#ab23ff')])
+
+	# style.map("TEntry",
+ #                        foreground=[('disabled', 'yellow'),
+ #                                    ('active', 'blue')],
+ #                        background=[('disabled', 'magenta'),
+ #                                    ('active', 'green')],
+ #                        highlightcolor=[('focus', 'green'),
+ #                                        ('!focus', 'red')],
+ #                        fieldbackground=[('disabled', 'green'),
+ #                                        ('!disabled', 'red')])
 
 
 
@@ -116,11 +130,11 @@ class ExamPage:
 		self.start_button = ttk.Button(self.start_page, text="START", takefocus=0, padding=10, style="page.TButton", command = self.startQuiz)
 		self.start_options_frame = ttk.Frame(self.start_page, relief=SOLID, borderwidth=1)
 
-		self.start_info = ttk.Label(self.start_page, text="< some info >", font=(FONT_MAIN, 14), anchor="c", relief=SOLID, borderwidth=1)
+		self.start_info = ttk.Label(self.start_page, text="", font=(FONT_MAIN, 14), anchor="c", relief=SOLID, borderwidth=1)
 
 		self.start_button.pack(expand=True)
 		self.start_info.pack(side="bottom", fill=X)
-		self.start_options_frame.pack(side="bottom", fill=X, pady=10)
+		self.start_options_frame.pack(side="bottom", fill=X, pady=40)
 		
 
 		ttk.Button(self.start_options_frame, takefocus=0, text="Low rated", style="option.TButton", command = lambda: self.switchStartOptions(1)).pack(side="left", padx=10, expand=True)
@@ -145,7 +159,9 @@ class ExamPage:
 
 		self.answer_entry = ttk.Entry(self.quizFormContainer, font=(FONT_MAIN, 18), justify="center", width=26)
 
-		self.quiz_info = ttk.Label(self.quizFormContainer, text="< some info >", width=30, font=(FONT_MAIN, 14), anchor="c", relief=SOLID, borderwidth=1)
+		self.quiz_right_answer = ttk.Label(self.quizFormContainer, text="", width=30, font=(FONT_MAIN, 10), anchor="c", relief=SOLID, borderwidth=1)
+
+		self.quiz_info = ttk.Label(self.quizFormContainer, text="", width=30, font=(FONT_MAIN, 14), anchor="c", relief=SOLID, borderwidth=1)
 
 		
 		self.stats_frame = ttk.Frame(self.quizFormContainer, relief=SOLID, borderwidth=1)
@@ -161,7 +177,7 @@ class ExamPage:
 
 		self.stop_button = ttk.Button(self.quiz_page, text="! Stop !", takefocus=0, command=self.stopQuiz, style="common.TButton")
 
-		self.skip_button = ttk.Button(self.quiz_page, text="Skip", takefocus=0, command=lambda: self.onCheck(True), style="common.TButton")
+		# self.skip_button = ttk.Button(self.quiz_page, text="Skip", takefocus=0, command=lambda: self.onCheck(True), style="common.TButton")
 
 		# self.guess_name.pack(side="left", anchor="w", pady=(30, 0), padx=(30, 0))
 		# self.stats_frame.pack(side="top", anchor="n", pady=(20, 0), fill=X, padx=(0, 10))
@@ -173,13 +189,18 @@ class ExamPage:
 		self.stats_frame.grid(row=0, column=1, sticky="nsew", pady=(0, 4), padx=20)
 		self.target_word.grid(row=1, column=1, sticky="nsew", pady=(0, 10))
 		self.answer_entry.grid(row=2, column=1, pady=(0, 10), sticky="nsew")
+
 		self.quiz_info.grid(row=3, column=1, sticky="nsew", pady=(0, 10))
+
+		self.quiz_right_answer.grid(row=4, column=1, sticky="nsew", pady=(0, 10))
+
+		
 
 		
 		self.quizContainer.pack(fill=BOTH, expand=True)
 
 		self.stop_button.pack(side="left")
-		self.skip_button.pack(side="left", expand=True)
+		# self.skip_button.pack(side="left", expand=True)
 		self.check_button.pack(side="right")
 
 		self.quiz_seq_current.pack(side="left")
@@ -187,24 +208,6 @@ class ExamPage:
 
 		self.rating_value.pack(side="right")
 		self.rating_name.pack(side="right", padx=(0, 4))
-		
-
-
-		# QUIZ RESULT PAGE
-		self.quizResultContainer = ttk.Frame(self.quizContainer, relief=SOLID, borderwidth=1)
-
-		self.result_target_word = ttk.Label(self.quizResultContainer, text="WORD", anchor="c", relief=SOLID, borderwidth=1)
-
-		self.result_user_guess = ttk.Label(self.quizResultContainer, text="GUESS", anchor="c", relief=SOLID, borderwidth=1)
-
-		self.result_answer = ttk.Label(self.quizResultContainer, text="ANSWER", anchor="c", relief=SOLID, borderwidth=1)
-
-		self.result_variants = ttk.Label(self.quizResultContainer, text="(VARIANTS)", anchor="c", relief=SOLID, borderwidth=1)
-
-		self.result_target_word.pack()
-		self.result_user_guess.pack()
-		self.result_answer.pack()
-		self.result_variants.pack()
 
 
 	def startQuiz(self):
@@ -218,8 +221,10 @@ class ExamPage:
 		print('Option selected: ' + str(self.start_option_selected))
 
 		if not self.start_option_selected == 3:
-			r_min = 0.0 if self.start_option_selected == 1 else 5.0
-			r_max = 10.0 if self.start_option_selected == 1 else 15.0
+			# r_min = 0.0 if self.start_option_selected == 1 else 5.0
+			# r_max = 10.0 if self.start_option_selected == 1 else 15.0
+			r_min = OPTIONS[self.start_option_selected]["min"]
+			r_max = OPTIONS[self.start_option_selected]["max"]
 			for i in range(len(self.data)):
 				if self.data[i]["rating"] >= r_min and self.data[i]["rating"] <= r_max:
 					self.quiz_seq.append(i)
@@ -232,8 +237,6 @@ class ExamPage:
 			setLabelText(self.root, self.start_info, "No words with selected rating!", INFO_MSG_DELAY)
 			return
 
-		self.quiz_seq_count["text"] = '/' + str(len(self.quiz_seq))
-
 		shuffle(self.quiz_seq)
 		self.quiz_word_id = -1
 
@@ -243,32 +246,87 @@ class ExamPage:
 
 
 	def onCheck(self, skip=False):
-		if not skip and self.answer_entry.get().strip() == '':
-			setLabelText(self.root, self.quiz_info, "Enter any translation!", INFO_MSG_DELAY)
-			return
-
 		# TODO: Check answer, setup and update rating and sequence for word
-		print('onCheck, skipped = ' + str(skip))
+		self.answer_entry.configure(state=["disabled"])
 
+		id = self.quiz_seq[self.quiz_word_id]
+		t = self.data[id]["translation"].split(',')
+		v = (' (' + ', '.join(t[1:]) + ')') if len (t[1:]) > 0 else ''
+
+		addRating = -1.0
+
+		if self.answer_entry.get().strip().lower() == t[0].lower():
+			addRating = 1.0
+		else:
+			for w in t[1:]:
+				if self.answer_entry.get().strip().lower() == w.lower():
+					addRating = 0.5
+					break
+
+		if addRating == -1.0:
+			self.quiz_info.configure(foreground=COLOR_BAD)
+			setLabelText(self.root, self.quiz_info, "Rating: -1.0", 0)
+			currentSeqStep = "0"
+		else:
+			self.quiz_info.configure(foreground=COLOR_GOOD)
+			setLabelText(self.root, self.quiz_info, "Rating: +" + str(addRating), 0)
+			currentSeqStep = str(int(addRating * 2))
+
+		newSeq = self.data[id]["seq"][-19:] + currentSeqStep
+		newRating = min(20.0, max(0.0, self.data[id]["rating"] + addRating))
+		diffRating = newRating - self.data[id]["rating"]
+
+		self.info.updateDictStatusInfo(rating_changed=diffRating)
+
+		# Update database
+		self.db.execute('UPDATE ? SET rating=?, seq=? WHERE id=?', LANG_FROM["token"], newRating, newSeq, self.data[id]["id"])
+
+		print(newRating, newSeq)
+
+		self.data[id]["rating"] = newRating
+		self.data[id]["seq"] = newSeq
+
+		self.rating_value["text"] = self.data[id]['rating']
+		self.rating_value.configure(foreground=selectColor(float(self.rating_value["text"])))
+
+		# if (self.start_option_selected == 1 and newRating > 10.0) or (self.start_option_selected == 2 and (newRating < 5.0 or newRating > 15.0)):
+		if (newRating < OPTIONS[self.start_option_selected]["min"] or newRating > OPTIONS[self.start_option_selected]["max"]):
+			self.quiz_seq.pop(self.quiz_word_id)
+			self.quiz_word_id -= 1
+
+		setLabelText(self.root, self.quiz_right_answer, t[0] + v, 0)
 
 		# SHOW RESULT PAGE
-		self.skip_button.pack_forget()
+		# self.skip_button.pack_forget()
 		self.check_button["text"] = "Next ->"
 		self.check_button.configure(command=self.stepQuiz)
-		self.quizFormContainer.pack_forget()
-		self.quizResultContainer.pack(fill=BOTH, expand=True, pady=(0, 20), anchor="s")
+		# self.quizFormContainer.pack_forget()
+		# self.quizResultContainer.pack(fill=BOTH, expand=True, pady=(0, 20), anchor="s")
+		# self.result_answer.grid(row=3, column=1, sticky="nsew", pady=(0, 10))
+
+
 		
 
 	# TODO
 	def stepQuiz(self):
+		self.answer_entry.configure(state=["!disabled"])
+		self.quiz_info.configure(foreground='black')
+
+		if len(self.quiz_seq) <= 0:
+			self.stopQuiz()
+			setLabelText(self.root, self.start_info, "No more words in selected category!", INFO_MSG_DELAY)
+			return
 
 		self.quiz_word_id += 1
 		if self.quiz_word_id >= len(self.quiz_seq):
+			shuffle(self.quiz_seq)
 			self.quiz_word_id = 0
 
 		# TODO: IF QUIZ_SEQ ENDS THEN DO SOMETHING!
 
 		self.quiz_seq_current["text"] = self.quiz_word_id + 1
+		self.quiz_seq_count["text"] = '/' + str(len(self.quiz_seq))
+
 
 		id = self.quiz_seq[self.quiz_word_id]
 
@@ -281,11 +339,15 @@ class ExamPage:
 
 		self.answer_entry.delete(0, END)
 		self.quiz_info["text"] = ""
-		self.skip_button.pack(side="left", expand=True)
+		# self.skip_button.pack(side="left", expand=True)
 		self.check_button["text"] = "? Check ?"
 		self.check_button.configure(command=self.onCheck)
-		self.quizResultContainer.pack_forget()
-		self.quizFormContainer.pack(side="bottom", pady=(0, 60))
+		self.quizFormContainer.pack(side="left", padx=(40, 0))
+
+		# SHOW RESULT
+		self.quiz_right_answer["text"] = ""
+		self.quiz_info["text"] = ""
+
 		self.answer_entry.focus_set()
 
 
@@ -321,7 +383,7 @@ class ExamPage:
 
 
 	def onKeyPressed(self, event):
-		if event.keysym == 'Return' and (self.quizResultContainer.winfo_viewable() or (self.quizFormContainer.winfo_viewable() and self.root.focus_get() == self.answer_entry)):
+		if event.keysym == 'Return' and (self.quizFormContainer.winfo_viewable() and self.root.focus_get() == self.answer_entry):
 			self.check_button.invoke()
 			print("Check/Next button invoked!")
 
@@ -605,6 +667,8 @@ class DictPage:
 
 				self.word_edit_rating.configure(foreground=selectColor(float(self.word_edit_rating["text"])))
 
+				self.rating_cbox.state(["!selected"])
+
 		self.reloadDictionary()
 
 		if iData == -1:
@@ -627,7 +691,7 @@ class DictPage:
 		slaves = self.dict_content.grid_slaves()
 		for i in slaves:
 			i.destroy()
-		self.scrollFrame.after(1000, self.loadDictionary)
+		self.loadDictionary()
 		self.reveal_button.configure(text = "Show translation")
 
 
@@ -671,11 +735,11 @@ class DictPage:
 		if not self.DICT_LOADED:
 			self.loadDictionary()
 			self.DICT_LOADED = True
+		else:
+			self.reloadDictionary()
 
 
 	def loadDictionary(self):
-		print("Dictionary loaded!")
-
 		for i in range(len(self.data)):
 			translated = (self.data[i]['translation']).split(',')
 
@@ -696,6 +760,7 @@ class DictPage:
 				padx=(0, 4), sticky="nsew")
 
 			ttk.Button(self.dict_content, text="...", takefocus=0, style="dict.TButton", command=lambda i=i: self.editEntry(i)).grid(row = i, column=5, sticky="nsew")
+		print("Dictionary loaded!")
 			
 			# TABLE english // LANG_FROM["token"]
 			# id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, 
