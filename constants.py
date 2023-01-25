@@ -31,8 +31,8 @@ COLOR_TOP = '#B143FF'
 FONT_MAIN = "Cascadia Code" # Variants: "Bahnschrift Condensed", "Berlin Sans FB Demi", "Britannic Bold", "Playbill"
 INFO_MSG_DELAY = 3 # in seconds
 
-ENG = {"token": "english", "tag": "en", "short": "RUS", "image": ""}
-RUS = {"token": "russian", "tag": "ru", "short": "ENG", "image": ""}
+ENG = {"token": "english", "tag": "en", "short": "ENG", "image": ""}
+RUS = {"token": "russian", "tag": "ru", "short": "RUS", "image": ""}
 
 TRANSLATOR = googletrans.Translator()
 
