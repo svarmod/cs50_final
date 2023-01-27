@@ -3,9 +3,14 @@ from constants import *
 from tkinter import *
 from tkinter import ttk
 from ttkthemes import ThemedTk
+from tkinter.filedialog import askopenfilename
+
 from PIL import Image, ImageTk
 from cs50 import SQL
 from random import shuffle
+
+import copy
+import threading
 
 
 
@@ -94,6 +99,7 @@ def main():
 	# Create pages and them to global dictionary
 	PAGES.update({"exam": ExamPage(root, info_header, f_buttons, f_content, f_footer, db, data)})
 	PAGES.update({"dict": DictPage(root, info_header, f_buttons, f_content, f_footer, db, data)})
+	PAGES.update({"import": ImportPage(root, info_header, f_buttons, f_content, f_footer, db, data)})
 	# And show first page after
 	showPage("exam")
 
@@ -226,7 +232,7 @@ class ExamPage:
 			r_min = OPTIONS[self.start_option_selected]["min"]
 			r_max = OPTIONS[self.start_option_selected]["max"]
 			for i in range(len(self.data)):
-				if self.data[i]["rating"] >= r_min and self.data[i]["rating"] <= r_max:
+				if not self.data[i]["translation"] == '' and self.data[i]["rating"] >= r_min and self.data[i]["rating"] <= r_max:
 					self.quiz_seq.append(i)
 		else:
 			self.quiz_seq.extend(list(range(len(self.data))))
@@ -438,6 +444,7 @@ class DictPage:
 		self.add_button = ttk.Button(self.dictContainer, text="Add new word", takefocus=0, command=self.toggleDictionary, style="common.TButton")
 		self.reload_button = ttk.Button(self.dictContainer, text="Reload", takefocus=0, command=self.reloadDictionary, style="common.TButton")
 
+
 		self.reveal_button = ttk.Button(self.dictContainer, text="Show translation", width=24, takefocus=0, command=self.toggleTranslation, style="common.TButton")
 
 		# self.dict_header = ttk.Frame(self.scrollFrame)
@@ -513,7 +520,8 @@ class DictPage:
 		self.add_info = ttk.Label(self.formContainer, text="", font=(FONT_MAIN, 12), anchor="c") # relief=SOLID, borderwidth=1
 		self.add_info.grid(row=5, column = 1, pady=(10, 0), sticky="nsew")
 
-		ttk.Button(self.addContainer, text="Back", takefocus=0, command=self.toggleDictionary, style="common.TButton").pack(side="left")
+		self.back_button = ttk.Button(self.addContainer, text="Back", takefocus=0, command=self.toggleDictionary, style="common.TButton")
+		self.back_button.pack(side="left")
 
 		self.delete_word_button = ttk.Button(self.addContainer, text="Delete", takefocus=0, style="common.TButton", command=lambda: self.deleteWord())
 		self.delete_word_button.pack(side="bottom")
@@ -800,6 +808,13 @@ class DictPage:
 		# DEBUG
 		print("Edit row: " + str(i + 1) + ", id " + str(self.data[i]["id"]) + ", word : " + self.data[i].get("word"))
 
+	
+		if not self.DICT_LOADED:
+			self.loadDictionary()
+			self.DICT_LOADED = True
+		else:
+			self.reloadDictionary()
+
 
 	def get(self):
 		return [self.dict_page, self.page_button]
@@ -810,6 +825,193 @@ class DictPage:
 		self.dictContainer.pack(fill=BOTH, expand=True)
 		self.toggleTranslation(True)
 		self.clearAddForm()
+
+
+
+
+
+
+
+class ImportPage:
+	def __init__(self, root, info_header, f_buttons, f_content, f_footer, db, data):
+
+		self.root = root
+		self.db = db
+		self.data = data
+		self.parent = f_content
+		self.info = info_header
+
+		self.STOP = False
+
+		self.page_button = generateButton(f_buttons, "import")
+		self.import_page = ttk.Frame(self.parent, relief=SOLID, borderwidth=1)
+
+
+		self.importContainer = ttk.Frame(self.import_page, padding=10, relief=SOLID, borderwidth=1)
+		self.importContainer.pack(expand=1)
+
+
+		self.import_file_label = ttk.Label(self.importContainer, text="File: ", font=(FONT_MAIN, 12), anchor="e")
+		self.import_file_label.grid(row=0, column=0, sticky="nsew")
+
+		self.import_filepath = ttk.Entry(self.importContainer, font=(FONT_MAIN, 12), justify="center", width=30)
+		self.import_filepath.grid(row=0, column=1, sticky="nsew", pady=10, columnspan=2)
+
+		self.import_browse_button = ttk.Button(self.importContainer, text="Browse", takefocus=0, command=self.browserFile, style="common.TButton")
+		self.import_browse_button.grid(row=0, column=3, sticky="nsew", pady=10, padx=(2, 0))
+
+
+
+		self.import_minlen_label = ttk.Label(self.importContainer, text="Word min length: ", font=(FONT_MAIN, 12), anchor="e")
+		self.import_minlen_label.grid(row=1, column=0, sticky="e", columnspan=2)
+
+		self.import_minlen = ttk.Entry(self.importContainer, width=5, font=(FONT_MAIN, 12), justify="center")
+		self.import_minlen.grid(row=1, column=2, sticky="w", pady=10)
+
+
+
+		self.import_translate_cbox = ttk.Checkbutton(self.importContainer, text="Autotranslate", takefocus=0, style="common.TCheckbutton")
+		self.import_translate_cbox.grid(row=2, column=0, sticky="w", pady=10, columnspan=2, padx=(8, 0))
+
+
+		self.import_proper_cbox = ttk.Checkbutton(self.importContainer, text="Skip proper names", takefocus=0, style="common.TCheckbutton")
+		self.import_proper_cbox.grid(row=3, column=0, sticky="w", pady=10, columnspan=2, padx=(8, 0))
+
+		
+
+		self.import_start_button = ttk.Button(self.importContainer, text="Start", takefocus=0, style="common.TButton", command=self.importStart)
+		self.import_start_button.grid(row=3, column=3, sticky="nsew", pady=10)
+
+		self.import_info = ttk.Label(self.importContainer, text="", font=(FONT_MAIN, 12), anchor="c", relief=SOLID, borderwidth=1)
+		self.import_info.grid(row=4, column = 0, pady=(10, 0), sticky="nsew", columnspan=4)
+
+
+		self.controls = [self.import_filepath, self.import_browse_button, self.import_minlen,
+					     self.import_translate_cbox, 
+					     PAGES['exam'].get()[1], PAGES['dict'].get()[1]]
+
+
+
+	def browserFile(self):
+		filepath = askopenfilename()
+		if filepath:
+			self.import_filepath.delete(0, END)
+			self.import_filepath.insert(0, filepath)
+
+
+	def importStart(self):
+		self.STOP = False
+		filepath = self.import_filepath.get()
+		if filepath == '':
+			setLabelText(self.root, self.import_info, "Please, select file for import data!", INFO_MSG_DELAY)
+			return
+
+		if not os.access(filepath, os.R_OK):
+			setLabelText(self.root, self.import_info, "Can't open file!", INFO_MSG_DELAY)
+			return
+
+		try:
+			if int(self.import_minlen.get()) < 1:
+				raise Exception()
+		except:
+			setLabelText(self.root, self.import_info, "Wrong length value!", INFO_MSG_DELAY)
+			return
+
+		for i in self.controls:
+			i.state(["disabled"])
+		self.import_start_button["text"] = "Stop"
+		self.import_start_button.configure(command=self.stopping)
+		self.import_info["text"] = "Processing..."
+
+		threading.Thread(target = self.payload, args = (filepath,)).start()
+
+
+	def stopping(self):
+		self.STOP = True
+
+
+	def payload(self, filepath):
+		try:
+			tempdict = list()
+			with open(filepath, "r") as f:
+				punctuation = ',.!?@#$%^&*()_+=\\/\'\"{}[]<>:;~`№|'
+				count = 0
+				for line in f:
+					line = line.translate(str.maketrans('', '', punctuation))
+					words = line.split()
+					for w in words:
+						if self.STOP:
+							self.import_info["text"] = "Aborted! " + str(count) + " new words added."
+							self.importStop()
+							return
+						if w.islower() and w.isalpha() and len(w) >= int(self.import_minlen.get()):
+							if not w in [x['word'] for x in self.data] and not w in tempdict[::2]:
+								t = ""
+								if self.import_translate_cbox.instate(['selected']):
+									t = TRANSLATOR.translate(w, src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
+
+								if t == w:
+									continue
+
+								tempdict.extend([w, t])
+								count += 1
+
+			self.import_info["text"] = "Finished! " + str(count) + " new words added."
+			self.importStop(tempdict)
+		except:
+			setLabelText(self.root, self.import_info, "Wrong file type", INFO_MSG_DELAY)
+			self.importStop()
+			return
+
+
+	def importStop(self, newWords=None):
+		self.STOP = False
+
+		# Add new words to database and refresh dict in memory
+		if newWords and len(newWords) > 0 and len(newWords) % 2 == 0:
+			print(newWords)
+			cmd = 'INSERT INTO ? (word, translation) VALUES' + ' (?,?),' * (len(newWords) // 2)
+			self.db.execute(cmd[:-1], LANG_FROM["token"], *newWords)
+			self.data.clear()
+			self.data.extend(self.db.execute("SELECT * FROM ? ORDER BY word ASC", LANG_FROM["token"]))
+
+		self.info.updateDictStatusInfo()
+
+		for i in self.controls:
+			i.state(["!disabled"])
+		self.import_start_button["text"] = "Start"
+		self.import_start_button.configure(command=self.importStart)
+
+
+	def onShown(self):
+		self.restart()
+
+
+	def get(self):
+		return [self.import_page, self.page_button]
+
+
+	def restart(self):
+		self.import_filepath.delete(0, END)
+
+		# DEBUG
+		# self.import_filepath.insert(0, "G:/Dev/_CS50/Final Project/test_text.txt")
+
+		self.import_minlen.delete(0, END)
+		self.import_minlen.insert(0, "2")
+		self.import_translate_cbox.state(["selected"])
+		self.import_translate_cbox.state(["!alternate"])
+		self.import_proper_cbox.state(["selected"])
+		self.import_proper_cbox.state(["!alternate"])
+		self.import_proper_cbox.state(["disabled"])
+		self.import_info["text"] = ""
+		
+
+
+
+
+
+
 			
 
 def setLabelText(root, label, text="", time=0):
