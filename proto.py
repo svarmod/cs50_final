@@ -17,15 +17,16 @@ import threading
 
 
 PAGES = dict()
-DATA = list()
+# DATA = list()
 INFO_CALLBACK = None
 
 LANG_FROM = ENG
 LANG_TO = RUS
 
-OPTIONS = {1: {"min": 0.0, "max": 10.0},
-           2: {"min": 5.0, "max": 15.0},
-           3: {"min": 0.0, "max": 20.0}}
+OPTIONS = [{"text": "< 10", "min": 0.0, "max": 10.0},
+           {"text": "5 - 15", "min": 5.0, "max": 15.0},
+           {"text": "< 20", "min": 0.0, "max": 19.9},
+           {"text": "All", "min": 0.0, "max": 20.9}]
 
 
 def main():
@@ -64,7 +65,7 @@ def main():
 	style.configure('common.TCheckbutton', font=(FONT_MAIN, 10, "bold"))
 	style.configure('common.TRadiobutton', font=(FONT_MAIN, 10, "bold"))
 
-	style.configure('option.TButton', font=(FONT_MAIN, 10, "bold"), width=16)
+	style.configure('option.TButton', font=(FONT_MAIN, 10, "bold"))
 	style.map('option.TButton', foreground=[('disabled', '#ab23ff')])
 
 	# style.map("TEntry",
@@ -127,7 +128,7 @@ class ExamPage:
 		# START PAGE
 		self.quiz_seq = list()
 		self.quiz_word_id = -1
-		self.start_option_selected = 1
+		self.start_option_selected = 0
 
 
 		self.start_page = ttk.Frame(self.exam_page, padding=10)
@@ -138,15 +139,19 @@ class ExamPage:
 
 		self.start_info = ttk.Label(self.start_page, text="", font=(FONT_MAIN, 14), anchor="c", relief=SOLID, borderwidth=1)
 
-		self.start_button.pack(expand=True)
-		self.start_info.pack(side="bottom", fill=X)
-		self.start_options_frame.pack(side="bottom", fill=X, pady=40)
+		self.start_altcheck_cbox = ttk.Checkbutton(self.start_page, text="Use back-translate checking", takefocus=0, style="common.TCheckbutton")
+		self.start_altcheck_cbox.state(["!alternate", "!selected"])
 		
 
-		ttk.Button(self.start_options_frame, takefocus=0, text="Low rated", style="option.TButton", command = lambda: self.switchStartOptions(1)).pack(side="left", padx=10, expand=True)
-		ttk.Button(self.start_options_frame, takefocus=0, text="Medium rated", style="option.TButton", command = lambda: self.switchStartOptions(2)).pack(side="left", padx=10, expand=True)
-		ttk.Button(self.start_options_frame, takefocus=0, text="All", style="option.TButton", command = lambda: self.switchStartOptions(3)).pack(side="left", padx=10, expand=True)
+		self.start_button.pack(expand=True)
+		self.start_info.pack(side="bottom", fill=X)
+		self.start_options_frame.pack(side="bottom", fill=X, pady=(20, 10))
+		self.start_altcheck_cbox.pack(side="bottom")
+		
 
+		# Generate options buttons
+		for i, v in enumerate(OPTIONS):
+			ttk.Button(self.start_options_frame, takefocus=0, text=v["text"], style="option.TButton", command = lambda i=i: self.switchStartOptions(i)).pack(side="left", padx=10, expand=True)
 
 
 		# QUIZ PAGE
@@ -226,16 +231,24 @@ class ExamPage:
 		# USE START OPTIONS FOR GENERATE LIST
 		print('Option selected: ' + str(self.start_option_selected))
 
-		if not self.start_option_selected == 3:
-			# r_min = 0.0 if self.start_option_selected == 1 else 5.0
-			# r_max = 10.0 if self.start_option_selected == 1 else 15.0
-			r_min = OPTIONS[self.start_option_selected]["min"]
-			r_max = OPTIONS[self.start_option_selected]["max"]
-			for i in range(len(self.data)):
-				if not self.data[i]["translation"] == '' and self.data[i]["rating"] >= r_min and self.data[i]["rating"] <= r_max:
-					self.quiz_seq.append(i)
-		else:
-			self.quiz_seq.extend(list(range(len(self.data))))
+		# if not self.start_option_selected == 3:
+		# 	# r_min = 0.0 if self.start_option_selected == 1 else 5.0
+		# 	# r_max = 10.0 if self.start_option_selected == 1 else 15.0
+		# 	r_min = OPTIONS[self.start_option_selected]["min"]
+		# 	r_max = OPTIONS[self.start_option_selected]["max"]
+		# 	for i in range(len(self.data)):
+		# 		if not self.data[i]["translation"] == '' and self.data[i]["rating"] >= r_min and self.data[i]["rating"] <= r_max:
+		# 			self.quiz_seq.append(i)
+		# else:
+		# 	self.quiz_seq.extend(list(range(len(self.data))))
+
+
+
+		r_min = OPTIONS[self.start_option_selected]["min"]
+		r_max = OPTIONS[self.start_option_selected]["max"]
+		for i, v in enumerate(self.data):
+			if (not v["translation"] == '' or self.start_altcheck_cbox.instate(['selected'])) and v["rating"] >= r_min and v["rating"] <= r_max:
+				self.quiz_seq.append(i)
 
 		print('>>>', self.quiz_seq) # DEBUG
 
@@ -256,18 +269,26 @@ class ExamPage:
 		self.answer_entry.configure(state=["disabled"])
 
 		id = self.quiz_seq[self.quiz_word_id]
-		t = self.data[id]["translation"].split(',')
-		v = (' (' + ', '.join(t[1:]) + ')') if len (t[1:]) > 0 else ''
 
 		addRating = -1.0
 
-		if self.answer_entry.get().strip().lower() == t[0].lower():
-			addRating = 1.0
+		if self.start_altcheck_cbox.instate(['selected']):
+			ans = self.answer_entry.get().strip().lower()
+			if not ans == '':
+				t = TRANSLATOR.translate(ans, src=LANG_TO["tag"], dest=LANG_FROM["tag"]).text.lower()
+				if self.target_word["text"] == t:
+					addRating = 1.0
 		else:
-			for w in t[1:]:
-				if self.answer_entry.get().strip().lower() == w.lower():
-					addRating = 0.5
-					break
+			t = self.data[id]["translation"].split(',')
+			v = (' (' + ', '.join(t[1:]) + ')') if len (t[1:]) > 0 else ''
+
+			if self.answer_entry.get().strip().lower() == t[0].lower():
+				addRating = 1.0
+			else:
+				for w in t[1:]:
+					if self.answer_entry.get().strip().lower() == w.lower():
+						addRating = 0.5
+						break
 
 		if addRating == -1.0:
 			self.quiz_info.configure(foreground=COLOR_BAD)
@@ -300,7 +321,10 @@ class ExamPage:
 			self.quiz_seq.pop(self.quiz_word_id)
 			self.quiz_word_id -= 1
 
-		setLabelText(self.root, self.quiz_right_answer, t[0] + v, 0)
+		if self.start_altcheck_cbox.instate(['selected']):
+			setLabelText(self.root, self.quiz_right_answer, "Google: " + t, 0)
+		else:
+			setLabelText(self.root, self.quiz_right_answer, t[0] + v, 0)
 
 		# SHOW RESULT PAGE
 		# self.skip_button.pack_forget()
@@ -374,15 +398,16 @@ class ExamPage:
 	def restart(self):
 		self.quiz_seq.clear()
 		self.quiz_word_id = -1
-		self.switchStartOptions(1)
+		self.switchStartOptions(0)
 		self.quiz_page.pack_forget()
 		self.start_page.pack(fill=BOTH, expand=True)
+		self.start_altcheck_cbox.state(["!selected"])
 
 
 	def switchStartOptions(self, v):
 		self.start_option_selected = v
 		for i, b in enumerate(self.start_options_frame.pack_slaves()):
-			if i + 1 == v:
+			if i == v:				
 				b.state(["disabled"])
 			else:
 				b.state(["!disabled"])
