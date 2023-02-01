@@ -44,10 +44,7 @@ def main():
 	style.configure('content.TCheckbutton', background = COLOR_SECONDARY, font=(FONT_MAIN, 10, "bold"))
 	style.configure('word.TLabel', background = COLOR_SECONDARY, font=(FONT_QUIZ_WORD, 12, "bold"))
 	style.configure('info.TLabel', background = COLOR_SECONDARY, font=(FONT_MAIN, 12, "bold"), anchor="c")
-	style.configure('table_header.TLabel', background=COLOR_TABLE_HEADER, font=(FONT_TABLE, 10, "bold"), justify=RIGHT)
-	style.configure('tableRowType1.TLabel', background=COLOR_TABLE_ROW_1, font=(FONT_TABLE, 8))
-	style.configure('tableRowType2.TLabel', background=COLOR_TABLE_ROW_2, font=(FONT_TABLE, 8))
-	style.configure('table.TButton', background=COLOR_TABLE_ROW_1, font=(FONT_TABLE, 8, "bold"), width=3)
+	style.configure('hint.TLabel', background = COLOR_DECOR, font=(FONT_MAIN, 8), anchor="c")
 	style.configure('seqNull.TLabel', background=COLOR_SECONDARY, foreground=COLOR_GREY)
 	style.configure('seqBad.TLabel', background=COLOR_SECONDARY, foreground=COLOR_BAD)
 	style.configure('seqMid.TLabel', background=COLOR_SECONDARY, foreground=COLOR_MID)
@@ -63,6 +60,8 @@ def main():
 	style.map('table.TButton', foreground=[('active', COLOR_BUTTON_HOVER)])
 	style.map('page.TButton', foreground=[('active', COLOR_BUTTON_HOVER), ('disabled', COLOR_BUTTON_ACTIVE)])
 	style.map('option.TButton', foreground=[('active', COLOR_BUTTON_HOVER), ('disabled', COLOR_BUTTON_ACTIVE)])
+
+	style.map('Treeview', background=[('selected', COLOR_PRIMARY)], foreground=[('selected', COLOR_SECONDARY)])
  	# ====================
 
 	# Generate main components
@@ -193,6 +192,7 @@ class ExamPage:
 		self.stepQuiz()
 
 
+# BUG: if selected google trans and answer == '' then no adding translation to info message
 	def onCheck(self, skip=False):
 		self.answer_entry.configure(state=["disabled"])
 
@@ -200,6 +200,8 @@ class ExamPage:
 		id = self.quiz_seq[self.quiz_word_id]
 
 		addRating = -1.0
+		t = ""
+		v = ""
 
 		if self.start_altcheck_cbox.instate(['selected']):
 			# Alternative answer checking, using googletrans
@@ -216,12 +218,12 @@ class ExamPage:
 						addRating = 1.0
 		else:
 			# Regular checking from dictionary data
-			t = self.data[id]["translation"].split(',')
-			v = (' (' + ', '.join(t[1:]) + ')') if len (t[1:]) > 0 else ''
-			if self.answer_entry.get().strip().lower() == t[0].lower():
+			tr = self.data[id]["translation"].split(',')
+			v = (' (' + ', '.join(tr[1:]) + ')') if len (tr[1:]) > 0 else ''
+			if self.answer_entry.get().strip().lower() == tr[0].lower():
 				addRating = 1.0
 			else:
-				for w in t[1:]:
+				for w in tr[1:]:
 					if self.answer_entry.get().strip().lower() == w.lower():
 						addRating = 1.0
 						break
@@ -257,15 +259,17 @@ class ExamPage:
 		if self.start_altcheck_cbox.instate(['selected']):
 			setLabelText(self.root, self.quiz_right_answer, "Google: " + t, 0)
 		else:
-			setLabelText(self.root, self.quiz_right_answer, t[0] + v, 0)
+			setLabelText(self.root, self.quiz_right_answer, tr[0] + v, 0)
 
 		self.check_button["text"] = "Next"
 		self.check_button.configure(command=self.stepQuiz)
 
+		PAGES['dict'].setDictLoaded(False)
+
 
 	def stepQuiz(self):
 		self.answer_entry.configure(state=["!disabled"])
-		self.quiz_info.configure(foreground='black')
+		self.quiz_info.configure(foreground=COLOR_BLACK)
 
 		if not self.quiz_seq:
 			self.stopQuiz()
@@ -336,6 +340,8 @@ class ExamPage:
 class DictPage:
 	def __init__(self, root, info_header, f_buttons, f_content, db, data):
 
+		self.DICT_LOADED = False
+
 		self.root = root
 		self.db = db
 		self.data = data
@@ -347,38 +353,47 @@ class DictPage:
 
 		# DICT PAGE
 		self.dictContainer = ttk.Frame(self.dict_page, padding=10, style='content.TFrame')
-		self.scrollContainer = ttk.Frame(self.dictContainer, relief=SUNKEN, borderwidth=1, style='table.TFrame')
-		self.scrollCanvas = Canvas(self.scrollContainer, width=532, height=1, background=COLOR_TABLE_ROW_1)
-		self.scrollBar = ttk.Scrollbar(self.scrollContainer, orient="vertical", command=self.scrollCanvas.yview)
-		self.scrollFrame = ttk.Frame(self.scrollCanvas)
-		self.scrollFrame.bind(
-			"<Configure>",
-			lambda e: self.scrollCanvas.configure(scrollregion=self.scrollCanvas.bbox("all"))
-		)
-		self.scrollCanvas.create_window((0, 0), window=self.scrollFrame, anchor="nw")
-		self.scrollCanvas.configure(yscrollcommand=self.scrollBar.set)
+
+		# Create table with scrollbar and little info label
+		self.tableContainer = ttk.Frame(self.dictContainer, relief=SUNKEN, borderwidth=1)
+		self.tableContainer.pack(fill=BOTH, expand=True)
+
+		columns = ("number", "word", "translation", "variants", "rating", "id")
+		self.dict_table = ttk.Treeview(master=self.tableContainer, columns=columns, show="headings", selectmode="browse")
+		self.dict_scrollbar = ttk.Scrollbar(master=self.tableContainer, orient=VERTICAL, command=self.dict_table.yview)
+		self.dict_table.configure(yscroll=self.dict_scrollbar.set)
+		self.dict_hint = ttk.Label(self.tableContainer, text="Double-click on row to edit entry", style='hint.TLabel')
+
+		self.dict_hint.pack(side="bottom", fill=X)
+		self.dict_table.pack(side="left", fill=BOTH, expand=1)
+		self.dict_scrollbar.pack(side="right", fill=Y, pady=(0,0))
+
+		#Setup columns and header
+		self.dict_table.column("number", width=42, anchor="e", stretch=0)
+		self.dict_table.column("word", width=150, anchor="c", stretch=0)
+		self.dict_table.column("translation", width=150, anchor="c", stretch=0)
+		self.dict_table.column("variants", width=132, anchor="c", stretch=0)
+		self.dict_table.column("rating", width=60, anchor="c", stretch=0)
+		self.dict_table.column("id", width=42, anchor="c", stretch=0)
+		self.dict_table.heading("number", text="№")
+		self.dict_table.heading("word", text="Word")
+		self.dict_table.heading("translation", text="Translation")
+		self.dict_table.heading("variants", text="Variants")
+		self.dict_table.heading("rating", text="Rating")
+		self.dict_table.heading("id", text="ID")
+		# Show all columns except "id"
+		self.dict_table["displaycolumns"]=("number", "word", "translation", "variants", "rating")
+		# Striped row table style
+		self.dict_table.tag_configure('oddrow', background=COLOR_TABLE_ROW_1)
+		self.dict_table.tag_configure('evenrow', background=COLOR_TABLE_ROW_2)
+		# Bind entry edit to double-click on row
+		self.dict_table.bind("<Double-1>", self.OnEntryDoubleClick)
 
 		self.add_button = ttk.Button(self.dictContainer, text="Add new word", takefocus=0, command=self.toggleDictionary, style='content.TButton')
-		# Reload button noneed of change it to full reload dict from DB
+# Reload button function need change to full reload dict from DB
 		self.reload_button = ttk.Button(self.dictContainer, text="Reload", takefocus=0, command=self.reloadDictionary, style='content.TButton')
 		self.reveal_button = ttk.Button(self.dictContainer, text="Show translation", takefocus=0, command=self.toggleTranslation, style='content.TButton')
 
-		self.dict_header = ttk.Frame(self.scrollContainer)
-		self.dict_content = ttk.Frame(self.scrollFrame)
-
-		self.dict_header.pack(fill=X, anchor="w", pady=(0, 0))
-		self.dict_content.pack(fill=BOTH, expand=True, anchor="nw")
-
-		# Dictionary table header
-		ttk.Label(self.dict_header, text="№", width=4, anchor="e", style='table_header.TLabel').grid(row=0, column=0, sticky="nsew")
-		ttk.Label(self.dict_header, text="Word", width=20, anchor="c", style='table_header.TLabel').grid(row=0, column=1, sticky="nsew")
-		ttk.Label(self.dict_header, text="Translation", width=15, anchor="e", style='table_header.TLabel').grid(row=0, column=2, sticky="nsew")
-		ttk.Label(self.dict_header, text="Variants", width=18, anchor="e", wraplength=142, style='table_header.TLabel').grid(row=0, column=3, sticky="nsew")
-		ttk.Label(self.dict_header, text="Rating  ", width=21, anchor="w", padding=(46,0,0,0), style='table_header.TLabel').grid(row=0, column=4, padx=(0, 8), sticky="nsew")
-
-		self.scrollContainer.pack(fill=BOTH, expand=True)
-		self.scrollCanvas.pack(side="left", fill=BOTH, expand=True)
-		self.scrollBar.pack(side="right", fill=Y, expand=True)
 		self.add_button.pack(side="right", pady=(10, 0), padx=(10, 0))
 		self.reload_button.pack(side="left", pady=(10, 0), padx=(0, 10))
 		self.reveal_button.pack(side="bottom", pady=(10, 0), fill=X)
@@ -408,7 +423,6 @@ class DictPage:
 		self.translation_label = ttk.Label(self.formContainer, text="Translation:", anchor="e", style='content.TLabel')
 		self.additional_label = ttk.Label(self.formContainer, text="Variants:", anchor="e", style='content.TLabel')
 
-# ENTRY / FONT
 		self.word_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
 		self.translation_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
 		self.additional_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
@@ -589,20 +603,20 @@ class DictPage:
 
 	
 	def reloadDictionary(self):
-		slaves = self.dict_content.grid_slaves()
-		for i in slaves:
-			i.destroy()
-		self.loadDictionary()
-		self.reveal_button.configure(text = "Show translation")
-
+		self.DICT_LOADED = False
+		self.dict_table.pack_forget()
+		self.dict_table.delete(*self.dict_table.get_children())
+		threading.Thread(target = lambda: self.loadDictionary()).start()
+		# self.loadDictionary()
+		
 
 	def toggleTranslation(self, forceHide=False):
 		needShow = False if forceHide else self.reveal_button["text"] == "Show translation"
-		slaves = self.dict_content.grid_slaves()[::-1]
-		for i, v in enumerate(self.data):
-			t = (v['translation']).split(',') if needShow else ["***", "***"]
-			slaves[i * 6 + 2]["text"] = t[0]
-			slaves[i * 6 + 3]["text"] = '\n'.join(t[1:])
+		for i, (data, row) in enumerate(zip(self.data, self.dict_table.get_children())):
+			t = (data['translation']).split(',') if needShow else ["***", "***"]
+			self.dict_table.set(row, "translation", t[0])
+			variants = ', '.join(t[1:])
+			self.dict_table.set(row, "variants", variants[:17] + "..." if len(variants) >= 20 else variants)
 		self.reveal_button["text"] = "Hide translation" if needShow else "Show translation"
 
 
@@ -628,23 +642,28 @@ class DictPage:
 
 
 	def onShown(self):
-		self.reloadDictionary()
+		if not self.DICT_LOADED:
+			self.reloadDictionary()
 
 
 	def loadDictionary(self):
+		self.dict_hint["text"] = "Loading dictionary..."
+		total_words = len(self.data)
 		for i, v in enumerate(self.data):
-			# Format translation variants
-			translated = (v['translation']).split(',')
-			# Make striped table using styles
-			style = 'tableRowType' + str(i % 2 + 1) + '.TLabel'
+			tag = 'evenrow' if i % 2 else 'oddrow'
+			self.dict_table.insert("", END, values=(i + 1, v["word"], "***", "***", v["rating"], v["id"]), tags = (tag,))
+			self.dict_hint["text"] = "Loading dictionary: " + f"{(i + 1) / total_words * 100:.1f}" + "%"
+		self.dict_hint["text"] = "Dictionary loaded!"
+		self.dict_table.pack(side="left", fill=BOTH, expand=1)
+		self.DICT_LOADED = True
+		self.root.after(3000, lambda: setLabelText(self.root, self.dict_hint, "Double-click on row to edit entry", 0))
 
-			ttk.Label(self.dict_content, text=str(i + 1), anchor="e", width=5, style=style).grid(row=i, column=0, sticky="nsew")
-			ttk.Label(self.dict_content, text=str(v['word']), anchor="c", width=23, justify=CENTER, style=style).grid(row=i, column=1, sticky="nsew")
-			ttk.Label(self.dict_content, text="***", anchor="c", width=23, justify=CENTER, style=style).grid(row=i, column=2, sticky="nsew")
-			ttk.Label(self.dict_content, text="***", wraplength=142, anchor="c", width=23, justify=CENTER, style=style).grid(row=i, column=3, sticky="nsew")
-			ttk.Label(self.dict_content, text=str(v['rating']), anchor="c", padding=(0,0,4,0), width=8, style=style).grid(row=i, column=4, padx=(0, 0), sticky="nsew")
-			ttk.Button(self.dict_content, text="...", takefocus=0, command=lambda i=i: self.editEntry(i), style='table.TButton').grid(row = i, column=5, sticky="nsew")
-			
+
+	def OnEntryDoubleClick(self, event):
+		item = self.dict_table.identify('item', event.x, event.y)
+		if item:
+			self.editEntry(int(self.dict_table.item(item, "values")[0]) - 1)
+
 
 	def editEntry(self, i):
 		translated = (self.data[i]['translation']).split(',')
@@ -674,6 +693,10 @@ class DictPage:
 
 	def get(self):
 		return [self.dict_page, self.page_button]
+
+
+	def setDictLoaded(self, value):
+		self.DICT_LOADED = value
 
 
 	def restart(self):
@@ -769,12 +792,15 @@ class ImportPage:
 		try:
 			# Temporary dict to store new words
 			tempdict = list()
-			with open(filepath, "r") as f:
+			with open(filepath, "r", encoding="UTF-8") as f:
+				print('test')
 				punctuation = ',.!?@#$%^&*()_+=\\/\'\"{}[]<>:;~`№|'
 				count = 0
 				for line in f:
+					print(len(line))
 					# Format string to remove any punctuations except dashes and create list
 					words = line.translate(str.maketrans('', '', punctuation)).split()
+					print(words)
 					for w in words:
 						# Interrupt process if stopped by user
 						if self.STOP:
@@ -822,6 +848,8 @@ class ImportPage:
 			self.db.execute(cmd[:-1], LANG_FROM["token"], *newWords)
 			self.data.clear()
 			self.data.extend(self.db.execute("SELECT * FROM ? ORDER BY word ASC", LANG_FROM["token"]))
+
+			PAGES['dict'].setDictLoaded(False)
 
 		self.info.updateDictStatusInfo()
 
