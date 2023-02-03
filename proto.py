@@ -7,34 +7,31 @@ from tkinter.filedialog import askopenfilename
 from PIL import Image, ImageTk
 from cs50 import SQL
 from random import shuffle
-import threading
+from threading import Thread
+from alphabet_detector import AlphabetDetector
+
+import re
 
 
 
-LANG_FROM = ENG			# Can be freely changed to any language described in constants.py
-LANG_TO = RUS			# Can be freely changed to any language described in constants.py
-
-PAGES = dict()			# List of all existed pages
+PAGES = dict()			# Dictionary of all existed pages
 INFO_CALLBACK = None	# Store callback function for cancel it if needed
 
 
 def main():
 
-	#Preparing database
-	if not os.access(PWD + DB_FILENAME, os.R_OK):
-		open(PWD + DB_FILENAME, 'w').close()
-	db = SQL("sqlite:///" + PWD + DB_FILENAME)
-	if len(db.execute('SELECT name FROM sqlite_master WHERE type="table" AND name=?', LANG_FROM["token"])) != 1:
-		# If not exist then create new one
-		db.execute('CREATE TABLE ? (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, word TEXT NOT NULL, translation TEXT DEFAULT "", rating REAL DEFAULT 0.0, seq TEXT DEFAULT "", info TEXT DEFAULT "")', LANG_FROM["token"])
+	# Preparing database, if database or table not exist then create new one
+	db = get_database()
 
 	# Get dictionary data from db
-	data = db.execute("SELECT * FROM ? ORDER BY word ASC", LANG_FROM["token"])
+	data = db.execute("SELECT * FROM ? ORDER BY word ASC", TABLE_NAME)
 
 	# Main window
 	root = ThemedTk(theme="plastik")
 	root.resizable(False, False)
 	root.geometry("{}x{}+{}+{}".format(WND_W, WND_H, (SCREEN_W - WND_W) // 2, (SCREEN_H - WND_H) // 2))
+	root.title(TITLE)
+	root.iconbitmap(ICON_IMAGE)
 
 	# ====== STYLES ======
 	style = ttk.Style()
@@ -55,13 +52,17 @@ def main():
 	style.configure('page.TButton', background=COLOR_PRIMARY, font=(FONT_MAIN, 14, "bold"), padding=(0,10,0,10))
 	style.configure('option.TButton', background = COLOR_SECONDARY, font=(FONT_MAIN, 10, "bold"))
 
-	style.map('content.TButton', foreground=[('active', COLOR_BUTTON_HOVER)])
+	style.map('content.TButton', foreground=[('active', COLOR_BUTTON_HOVER), ('disabled', COLOR_GREY)])
 	style.map('start.TButton', foreground=[('active', COLOR_BUTTON_HOVER)])
-	style.map('table.TButton', foreground=[('active', COLOR_BUTTON_HOVER)])
 	style.map('page.TButton', foreground=[('active', COLOR_BUTTON_HOVER), ('disabled', COLOR_BUTTON_ACTIVE)])
 	style.map('option.TButton', foreground=[('active', COLOR_BUTTON_HOVER), ('disabled', COLOR_BUTTON_ACTIVE)])
-
 	style.map('Treeview', background=[('selected', COLOR_PRIMARY)], foreground=[('selected', COLOR_SECONDARY)])
+
+	style.layout("Treeview", [('Treeview.treearea', {'sticky': 'nswe'})]) # Remove borders
+
+	root.option_add('*TCombobox*Listbox.font', (FONT_ENTRY, 12, "bold"))
+	root.option_add('*TCombobox*Listbox.selectBackground', COLOR_PRIMARY)
+	root.option_add('*TCombobox*Listbox.selectForeground', COLOR_SECONDARY)
  	# ====================
 
 	# Generate main components
@@ -85,7 +86,7 @@ def main():
 	PAGES.update({"import": ImportPage(root, info_header, f_buttons, f_content, db, data)})
 
 	# And show exam page as home
-	showPage("exam")
+	show_page("exam")
 
 	root.protocol('WM_DELETE_WINDOW', root.destroy)
 	root.mainloop()
@@ -99,11 +100,11 @@ class ExamPage:
 		self.data = data
 		self.info = info_header
 
-		self.page_button = generateButton(f_buttons, "exam")
+		self.page_button = generate_button(f_buttons, "exam")
 		self.exam_page = ttk.Frame(f_content)
 
 		# Bind check answer on quiz page to hit Enter key for better usability
-		self.root.bind('<KeyPress>', self.onKeyPressed)
+		self.root.bind('<KeyPress>', self.on_key_pressed)
     
 		self.quiz_seq = list()
 		self.quiz_word_id = -1
@@ -112,7 +113,7 @@ class ExamPage:
 		# START PAGE
 		self.start_page = ttk.Frame(self.exam_page, padding=10, style='content.TFrame')
 
-		self.start_button = ttk.Button(self.start_page, text="START", takefocus=0, command = self.startQuiz, style='start.TButton')
+		self.start_button = ttk.Button(self.start_page, text="START", takefocus=0, command = self.start_quiz, style='start.TButton')
 		self.start_options_frame = ttk.Frame(self.start_page, style='content.TFrame')
 		self.start_info = ttk.Label(self.start_page, text="", style='info.TLabel')
 		self.start_altcheck_cbox = ttk.Checkbutton(self.start_page, text="Use online cross-translate checking", takefocus=0, style='content.TCheckbutton')
@@ -124,28 +125,34 @@ class ExamPage:
 		self.start_options_frame.pack(side="bottom", fill=X, pady=(10, 30))
 		
 		# Generate options buttons
-		for i, v in enumerate(OPTIONS):
-			ttk.Button(self.start_options_frame, text=v["text"], takefocus=0, style='option.TButton', command = lambda i=i: self.switchStartOptions(i)).pack(side="left", padx=10, expand=True)
+		if len(OPTIONS) == 0:
+			OPTIONS.append({"text": "All", "min": 0.0, "max": 20.0})
+
+		for i, params in enumerate(OPTIONS):
+			ttk.Button(self.start_options_frame, text=params["text"], takefocus=0, style='option.TButton', command = lambda i=i: self.switch_start_options(i)).pack(side="left", padx=10, expand=True)
 
 		# QUIZ PAGE
 		self.quiz_page = ttk.Frame(self.exam_page, padding=10, style='content.TFrame')
 
-		self.quizContainer = ttk.Frame(self.quiz_page, style='content.TFrame')
-		self.quizFormContainer = ttk.Frame(self.quizContainer, style='content.TFrame')
+		self.quiz_container = ttk.Frame(self.quiz_page, style='content.TFrame')
+		self.quiz_form_container = ttk.Frame(self.quiz_container, style='content.TFrame')
 
-		self.target_word = ttk.Label(self.quizFormContainer, text="", anchor="c", style='word.TLabel')
-		self.guess_name = ttk.Label(self.quizFormContainer, text="Guess: ", anchor="e", style='content.TLabel')
-		self.answer_entry = ttk.Entry(self.quizFormContainer, width=26, justify="center", font=(FONT_ENTRY, 18))
-		self.quiz_right_answer = ttk.Label(self.quizFormContainer, text="", style='info.TLabel')
-		self.quiz_info = ttk.Label(self.quizFormContainer, text="", style='info.TLabel')
-		self.stats_frame = ttk.Frame(self.quizFormContainer, style='content.TFrame', padding=(0,0,0,8))
+		self.target_word = ttk.Label(self.quiz_form_container, text="", anchor="c", style='word.TLabel')
+		self.guess_name = ttk.Label(self.quiz_form_container, text="Guess: ", anchor="e", style='content.TLabel')
+		self.answer_entry = ttk.Entry(self.quiz_form_container, width=26, justify="center", font=(FONT_ENTRY, 18))
+		self.quiz_right_answer = ttk.Label(self.quiz_form_container, text="", style='info.TLabel')
+		self.quiz_info = ttk.Label(self.quiz_form_container, text="", style='info.TLabel')
+		self.stats_frame = ttk.Frame(self.quiz_form_container, padding=(0,0,0,8), style='content.TFrame')
 		self.quiz_seq_current = ttk.Label(self.stats_frame, text="", style='content.TLabel')
 		self.quiz_seq_count = ttk.Label(self.stats_frame, text="", style='content.TLabel')
 		self.rating_name = ttk.Label(self.stats_frame, text="Rating:", anchor="e", style='content.TLabel')
 		self.rating_value = ttk.Label(self.stats_frame, text="0.0", anchor="c", style='content.TLabel')
 
-		self.check_button = ttk.Button(self.quiz_page, text="Check", takefocus=0, command=self.onCheck, style='content.TButton')
-		self.stop_button = ttk.Button(self.quiz_page, text="Stop", takefocus=0, command=self.stopQuiz, style='content.TButton')
+		self.check_button = ttk.Button(self.quiz_page, text="Check", takefocus=0, command=self.on_check, style='content.TButton')
+		self.stop_button = ttk.Button(self.quiz_page, text="Stop", takefocus=0, command=self.stop_quiz, style='content.TButton')
+
+		# Extra frame to freeze 'self.target_word' height (when font size changing)
+		ttk.Frame(self.quiz_form_container, height=64, style='content.TFrame').grid(row=1, column=0)
 
 		self.guess_name.grid(row=2, column=0, sticky="nsew", pady=(13, 18), padx=(0, 4))
 		self.stats_frame.grid(row=0, column=1, sticky="nsew", pady=(20, 10), padx=10)
@@ -154,7 +161,7 @@ class ExamPage:
 		self.quiz_info.grid(row=3, column=1, sticky="nsew", pady=(0, 10))
 		self.quiz_right_answer.grid(row=4, column=1, sticky="nsew", pady=(0, 10))
 
-		self.quizContainer.pack(fill=BOTH, expand=True)
+		self.quiz_container.pack(fill=BOTH, expand=True)
 		self.stop_button.pack(side="left")
 		self.check_button.pack(side="right")
 		self.quiz_seq_current.pack(side="left")
@@ -163,13 +170,17 @@ class ExamPage:
 		self.rating_name.pack(side="right", padx=(0, 4))
 
 		# Decoration line
-		self.line = Canvas(self.quizFormContainer, height=1, background=COLOR_BLACK, highlightbackground=COLOR_DECOR)
+		self.line = Canvas(self.quiz_form_container, height=1, background=COLOR_BLACK, highlightbackground=COLOR_DECOR)
 		self.line.grid(row=0, column=1, sticky="sew", pady=(0, 10))
 
 
-	def startQuiz(self):
+	def set_db(self, db):
+		self.db = db
+
+
+	def start_quiz(self):
 		if not self.data:
-			setLabelText(self.root, self.start_info, "Dictionary is empty!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.start_info, "Dictionary is empty!", INFO_MSG_DELAY)
 			return
 
 		# Generate list of suitable words for quiz
@@ -177,103 +188,115 @@ class ExamPage:
 		# Get limits from options
 		r_min = OPTIONS[self.start_option_selected]["min"]
 		r_max = OPTIONS[self.start_option_selected]["max"]
-		for i, v in enumerate(self.data):
-			if (not v["translation"] == '' or self.start_altcheck_cbox.instate(['selected'])) and v["rating"] >= r_min and v["rating"] <= r_max:
+		for i, entry in enumerate(self.data):
+			if (not entry["translation"] == '' or self.start_altcheck_cbox.instate(['selected'])) and entry["rating"] >= r_min and entry["rating"] <= r_max:
 				self.quiz_seq.append(i)
 
 		if len(self.quiz_seq) == 0:
-			setLabelText(self.root, self.start_info, "No words with selected rating!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.start_info, "No words with selected rating!", INFO_MSG_DELAY)
 			return
 
 		shuffle(self.quiz_seq)
 		self.quiz_word_id = -1
 		self.start_page.pack_forget()
 		self.quiz_page.pack(fill=BOTH, expand=True)
-		self.stepQuiz()
+		self.step_quiz()
 
 
-# BUG: if selected google trans and answer == '' then no adding translation to info message
-	def onCheck(self, skip=False):
+	def on_check(self, skip=False):
 		self.answer_entry.configure(state=["disabled"])
 
 		# Get 'real' word index in self.data dictionary
 		id = self.quiz_seq[self.quiz_word_id]
 
-		addRating = -1.0
-		t = ""
-		v = ""
+		add_rating = -1.0
+		translated = ""
+		variants = ""
+		correct_answer = ""
 
+		user_answer = self.answer_entry.get().strip().lower()
+
+		# Check user answer
 		if self.start_altcheck_cbox.instate(['selected']):
 			# Alternative answer checking, using googletrans
-			ans = self.answer_entry.get().strip().lower()
-			if not ans == '':
-				# Translate user answer to origin lang and comparing with initial word
-				t = TRANSLATOR.translate(ans, src=LANG_TO["tag"], dest=LANG_FROM["tag"]).text.lower()
-				if self.target_word["text"] == t:
-					addRating = 1.0
-				else:
-					# Translate initial word to user language and comparing with user answer
-					t = TRANSLATOR.translate(self.target_word["text"], src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
-					if ans == t:
-						addRating = 1.0
+			# 1: Translate initial word and comparing it with user answer
+			translated = TRANSLATOR.translate(self.target_word["text"], src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
+			if user_answer == translated:
+				add_rating = 1.0
+				correct_answer = translated
+			elif not user_answer == "":
+				# 2: Translate user answer to origin lang and comparing with initial word
+				correct_answer = translated
+				translated = TRANSLATOR.translate(user_answer, src=LANG_TO["tag"], dest=LANG_FROM["tag"]).text.lower()
+				if self.target_word["text"] == translated:
+					add_rating = 1.0
+					correct_answer = user_answer
+			else:
+				# If user answer is wrong then just set variable for info message
+				correct_answer = translated
 		else:
 			# Regular checking from dictionary data
-			tr = self.data[id]["translation"].split(',')
-			v = (' (' + ', '.join(tr[1:]) + ')') if len (tr[1:]) > 0 else ''
-			if self.answer_entry.get().strip().lower() == tr[0].lower():
-				addRating = 1.0
+			translated = self.data[id]["translation"].split(',')
+			variants = (' (' + ', '.join(translated[1:]) + ')') if len (translated[1:]) > 0 else ''
+			if user_answer == translated[0].lower():
+				add_rating = 1.0
 			else:
-				for w in tr[1:]:
-					if self.answer_entry.get().strip().lower() == w.lower():
-						addRating = 1.0
+				for word in translated[1:]:
+					if user_answer == word.lower():
+						add_rating = 1.0
 						break
+			correct_answer = translated[0] + variants
 
-		if addRating == -1.0:
+		# Update UI with rating changes
+		if add_rating == -1.0:
 			self.quiz_info.configure(foreground=COLOR_BAD)
-			setLabelText(self.root, self.quiz_info, "Rating: -1.0", 0)
-			currentSeqStep = "0"
+			set_label_text(self.root, self.quiz_info, "Rating: -1.0", 0)
+			current_seq_step = "0"
 		else:
 			self.quiz_info.configure(foreground=COLOR_GOOD)
-			setLabelText(self.root, self.quiz_info, "Rating: +" + str(addRating), 0)
-			currentSeqStep = str(int(addRating * 2))
+			set_label_text(self.root, self.quiz_info, "Rating: +1.0", 0)
+			current_seq_step = "2"
+			# Initial idea was to add 0.5 rating (char '1' in guess sequence) for variants match.
+			# In this case 'current_seq_step' should be equals: str(int(add_rating * 2))
 
-		newSeq = self.data[id]["seq"][-19:] + currentSeqStep
-		newRating = min(20.0, max(0.0, self.data[id]["rating"] + addRating))
-		diffRating = newRating - self.data[id]["rating"]
+		new_seq = self.data[id]["seq"][-19:] + current_seq_step
+		new_rating = min(20.0, max(0.0, self.data[id]["rating"] + add_rating))
+		diff_rating = new_rating - self.data[id]["rating"]
 
-		self.info.updateDictStatusInfo(rating_changed=diffRating)
+		#Update dict status in window header
+		self.info.update_dict_status_info(rating_changed=diff_rating)
 
 		# Update database
-		self.db.execute('UPDATE ? SET rating=?, seq=? WHERE id=?', LANG_FROM["token"], newRating, newSeq, self.data[id]["id"])
-		# And dictionary in memory as well
-		self.data[id]["rating"] = newRating
-		self.data[id]["seq"] = newSeq
+		self.db.execute('UPDATE ? SET rating=?, seq=? WHERE id=?', TABLE_NAME, new_rating, new_seq, self.data[id]["id"])
+		# Update dictionary in memory as well
+		self.data[id]["rating"] = new_rating
+		self.data[id]["seq"] = new_seq
 		# Update UI
 		self.rating_value["text"] = self.data[id]['rating']
-		self.rating_value.configure(foreground=selectColor(float(self.rating_value["text"])))
+		self.rating_value.configure(foreground=select_color(float(self.rating_value["text"])))
 		# If word rating out of range selected option - then delete word from quiz sequence
-		if (newRating < OPTIONS[self.start_option_selected]["min"] or newRating > OPTIONS[self.start_option_selected]["max"]):
+		if (new_rating < OPTIONS[self.start_option_selected]["min"] or new_rating > OPTIONS[self.start_option_selected]["max"]):
 			self.quiz_seq.pop(self.quiz_word_id)
 			self.quiz_word_id -= 1
+
 		# Show result info
 		if self.start_altcheck_cbox.instate(['selected']):
-			setLabelText(self.root, self.quiz_right_answer, "Google: " + t, 0)
-		else:
-			setLabelText(self.root, self.quiz_right_answer, tr[0] + v, 0)
+			correct_answer = "Google: " + correct_answer
+		set_label_text(self.root, self.quiz_right_answer, correct_answer, 0)
 
 		self.check_button["text"] = "Next"
-		self.check_button.configure(command=self.stepQuiz)
+		self.check_button.configure(command=self.step_quiz)
 
-		PAGES['dict'].setDictLoaded(False)
+		PAGES['dict'].set_dict_loaded(False)
 
 
-	def stepQuiz(self):
+	def step_quiz(self):
 		self.answer_entry.configure(state=["!disabled"])
 		self.quiz_info.configure(foreground=COLOR_BLACK)
 
 		if not self.quiz_seq:
-			self.stopQuiz()
-			setLabelText(self.root, self.start_info, "No more words in selected category!", INFO_MSG_DELAY)
+			self.stop_quiz()
+			set_label_text(self.root, self.start_info, "No more words in selected category!", INFO_MSG_DELAY)
 			return
 		# Get next word from sequence or shuffle list and start from first element
 		self.quiz_word_id += 1
@@ -285,28 +308,28 @@ class ExamPage:
 		self.quiz_seq_count["text"] = '/' + str(len(self.quiz_seq))
 		# Get 'real' word index in self.data
 		id = self.quiz_seq[self.quiz_word_id]
-		# Adjusting font size according word length
-		fSize = min(30, (14 + 80 // len(self.data[id]['word'])))
-		self.target_word.configure(font=(FONT_QUIZ_WORD, fSize))
+		# Adjusting font size according word length: longer word => smaller font
+		font_size = min(30, (14 + 80 // len(self.data[id]['word'])))
+		self.target_word.configure(font=(FONT_QUIZ_WORD, font_size))
 		self.target_word["text"] = self.data[id]['word']
 		self.rating_value["text"] = self.data[id]['rating']
 		# Back UI to initial state
-		self.rating_value.configure(foreground=selectColor(float(self.rating_value["text"])))
+		self.rating_value.configure(foreground=select_color(float(self.rating_value["text"])))
 		self.answer_entry.delete(0, END)
 		self.quiz_info["text"] = ""
 		self.check_button["text"] = "Check"
-		self.check_button.configure(command=self.onCheck)
-		self.quizFormContainer.pack(side="left", padx=(40, 0))
+		self.check_button.configure(command=self.on_check)
+		self.quiz_form_container.pack(side="left", padx=(40, 0))
 		self.quiz_right_answer["text"] = ""
 		self.quiz_info["text"] = ""
 		self.answer_entry.focus_set()
 
 
-	def stopQuiz(self):
+	def stop_quiz(self):
 		self.restart()
 
 
-	def onShown(self):
+	def on_shown(self):
 		self.restart()
 
 
@@ -317,23 +340,23 @@ class ExamPage:
 	def restart(self):
 		self.quiz_seq.clear()
 		self.quiz_word_id = -1
-		self.switchStartOptions(0)
+		self.switch_start_options(0)
 		self.quiz_page.pack_forget()
 		self.start_page.pack(fill=BOTH, expand=True)
 		self.start_altcheck_cbox.state(["!selected"])
 
 
-	def switchStartOptions(self, v):
-		self.start_option_selected = v
-		for i, b in enumerate(self.start_options_frame.pack_slaves()):
-			if i == v:				
-				b.state(["!active", "disabled"])
+	def switch_start_options(self, value):
+		self.start_option_selected = value
+		for i, button in enumerate(self.start_options_frame.pack_slaves()):
+			if i == value:				
+				button.state(["!active", "disabled"])
 			else:
-				b.state(["!disabled"])
+				button.state(["!disabled"])
 
 
-	def onKeyPressed(self, event):
-		if event.keysym == 'Return' and (self.quizFormContainer.winfo_viewable() and self.root.focus_get() == self.answer_entry):
+	def on_key_pressed(self, event):
+		if event.keysym == 'Return' and (self.quiz_form_container.winfo_viewable() and self.root.focus_get() == self.answer_entry):
 			self.check_button.invoke()
 
 
@@ -347,22 +370,22 @@ class DictPage:
 		self.data = data
 		self.info = info_header
 
-		self.page_button = generateButton(f_buttons, "dict")
+		self.page_button = generate_button(f_buttons, "dict")
 
 		self.dict_page = ttk.Frame(f_content)
 
 		# DICT PAGE
-		self.dictContainer = ttk.Frame(self.dict_page, padding=10, style='content.TFrame')
+		self.dict_container = ttk.Frame(self.dict_page, padding=10, style='content.TFrame')
 
 		# Create table with scrollbar and little info label
-		self.tableContainer = ttk.Frame(self.dictContainer, relief=SUNKEN, borderwidth=1)
-		self.tableContainer.pack(fill=BOTH, expand=True)
+		self.table_container = ttk.Frame(self.dict_container, relief=SUNKEN, borderwidth=1)
+		self.table_container.pack(fill=BOTH, expand=True)
 
 		columns = ("number", "word", "translation", "variants", "rating", "id")
-		self.dict_table = ttk.Treeview(master=self.tableContainer, columns=columns, show="headings", selectmode="browse")
-		self.dict_scrollbar = ttk.Scrollbar(master=self.tableContainer, orient=VERTICAL, command=self.dict_table.yview)
+		self.dict_table = ttk.Treeview(master=self.table_container, columns=columns, show="headings", selectmode="browse")
+		self.dict_scrollbar = ttk.Scrollbar(master=self.table_container, orient=VERTICAL, command=self.dict_table.yview)
 		self.dict_table.configure(yscroll=self.dict_scrollbar.set)
-		self.dict_hint = ttk.Label(self.tableContainer, text="Double-click on row to edit entry", style='hint.TLabel')
+		self.dict_hint = ttk.Label(self.table_container, text="Double-click on row to edit entry", style='hint.TLabel')
 
 		self.dict_hint.pack(side="bottom", fill=X)
 		self.dict_table.pack(side="left", fill=BOTH, expand=1)
@@ -387,30 +410,29 @@ class DictPage:
 		self.dict_table.tag_configure('oddrow', background=COLOR_TABLE_ROW_1)
 		self.dict_table.tag_configure('evenrow', background=COLOR_TABLE_ROW_2)
 		# Bind entry edit to double-click on row
-		self.dict_table.bind("<Double-1>", self.OnEntryDoubleClick)
+		self.dict_table.bind("<Double-1>", self.on_entry_double_click)
 
-		self.add_button = ttk.Button(self.dictContainer, text="Add new word", takefocus=0, command=self.toggleDictionary, style='content.TButton')
-# Reload button function need change to full reload dict from DB
-		self.reload_button = ttk.Button(self.dictContainer, text="Reload", takefocus=0, command=self.reloadDictionary, style='content.TButton')
-		self.reveal_button = ttk.Button(self.dictContainer, text="Show translation", takefocus=0, command=self.toggleTranslation, style='content.TButton')
+		self.add_button = ttk.Button(self.dict_container, text="Add new word", takefocus=0, command=self.toggle_dictionary, style='content.TButton')
+		self.reload_button = ttk.Button(self.dict_container, text="Reload", takefocus=0, command=lambda: Thread(target = self.reload_database()).start(), style='content.TButton')
+		self.reveal_button = ttk.Button(self.dict_container, text="Show translation", takefocus=0, command=self.toggle_translation, style='content.TButton')
 
 		self.add_button.pack(side="right", pady=(10, 0), padx=(10, 0))
 		self.reload_button.pack(side="left", pady=(10, 0), padx=(0, 10))
 		self.reveal_button.pack(side="bottom", pady=(10, 0), fill=X)
 
 		# ADD PAGE
-		self.dictContainer.pack(fill=BOTH, expand=True)
+		self.dict_container.pack(fill=BOTH, expand=True)
 
-		self.addContainer = ttk.Frame(self.dict_page, padding=10, style='content.TFrame')
-		self.formContainer = ttk.Frame(self.addContainer, style='content.TFrame', padding=(0,60,0,0))
-		self.formContainer.pack(side="top", fill=BOTH, expand=True)
+		self.add_container = ttk.Frame(self.dict_page, padding=10, style='content.TFrame')
+		self.dict_form_container = ttk.Frame(self.add_container, style='content.TFrame', padding=(0,60,0,0))
+		self.dict_form_container.pack(side="top", fill=BOTH, expand=True)
 
 		# FRAME WITH RATING
-		self.word_info_frame = ttk.Frame(self.formContainer, height=40, style='content.TFrame')
+		self.word_info_frame = ttk.Frame(self.dict_form_container, height=40, style='content.TFrame')
 		self.word_edit_rating_text = ttk.Label(self.word_info_frame, text='Rating:', anchor="c", style='content.TLabel')
 		self.word_edit_rating = ttk.Label(self.word_info_frame, text='', anchor="c", style='content.TLabel')
 
-		# Labels for indicate answers sequence
+		# Labels for indicate answers sequence. Labels used cause need different color for each symbol.
 		for i in range(20):
 			item = ttk.Label(self.word_info_frame, text='|', width=0 , font=(FONT_SEQUENCE, 14, "bold"), style='seqNull.TLabel')
 			item.pack(side="left")
@@ -419,13 +441,13 @@ class DictPage:
 		self.word_edit_rating_text.pack(side="right", padx=(0, 4))
 
 		# FORM
-		self.word_label = ttk.Label(self.formContainer, text="Word:", anchor="e", style='content.TLabel')
-		self.translation_label = ttk.Label(self.formContainer, text="Translation:", anchor="e", style='content.TLabel')
-		self.additional_label = ttk.Label(self.formContainer, text="Variants:", anchor="e", style='content.TLabel')
+		self.word_label = ttk.Label(self.dict_form_container, text="Word:", anchor="e", style='content.TLabel')
+		self.translation_label = ttk.Label(self.dict_form_container, text="Translation:", anchor="e", style='content.TLabel')
+		self.additional_label = ttk.Label(self.dict_form_container, text="Variants:", anchor="e", style='content.TLabel')
 
-		self.word_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
-		self.translation_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
-		self.additional_entry = ttk.Entry(self.formContainer, width=26, font=(FONT_ENTRY, 18), justify="center")
+		self.word_entry = ttk.Entry(self.dict_form_container, width=26, font=(FONT_ENTRY, 18), justify="center")
+		self.translation_entry = ttk.Entry(self.dict_form_container, width=26, font=(FONT_ENTRY, 18), justify="center")
+		self.additional_entry = ttk.Entry(self.dict_form_container, width=26, font=(FONT_ENTRY, 18), justify="center")
 
 		self.word_label.grid(row=1, column=0, sticky="nsew", pady=(12, 12), padx=(0, 10))
 		self.translation_label.grid(row=2, column=0, sticky="nsew", pady=(12, 12), padx=(0, 10))
@@ -435,250 +457,280 @@ class DictPage:
 		self.translation_entry.grid(row=2, column=1, sticky="nsew", pady=(4, 4))
 		self.additional_entry.grid(row=3, column=1, sticky="nsew", pady=(4, 3))
 
-		self.rating_cbox = ttk.Checkbutton(self.formContainer, text="Reset rating", takefocus=0, style='content.TCheckbutton')
+		self.rating_cbox = ttk.Checkbutton(self.dict_form_container, text="Reset rating", takefocus=0, style='content.TCheckbutton')
 		self.rating_cbox.state(["!selected", "!alternate"])
 		self.rating_cbox.grid(row=4, column=1, pady=(10, 0))
 
-		self.add_info = ttk.Label(self.formContainer, text="", style='info.TLabel')
+		self.add_info = ttk.Label(self.dict_form_container, text="", style='info.TLabel')
 		self.add_info.grid(row=5, column = 1, pady=(10, 0), sticky="nsew")
 
-		self.back_button = ttk.Button(self.addContainer, text="Back", takefocus=0, command=self.toggleDictionary, style='content.TButton')
+		self.back_button = ttk.Button(self.add_container, text="Back", takefocus=0, command=self.toggle_dictionary, style='content.TButton')
 		self.back_button.pack(side="left")
 
-		self.delete_word_button = ttk.Button(self.addContainer, text="Delete", takefocus=0, command=lambda: self.deleteWord(), style='content.TButton')
-		self.delete_word_button.pack(side="bottom")
+		self.delete_button = ttk.Button(self.add_container, text="Delete", takefocus=0, command=self.delete_word, style='content.TButton')
+		self.delete_button.pack(side="bottom")
 
-		self.save_word_button = ttk.Button(self.addContainer, text="Save", takefocus=0, command=lambda: self.saveWord(), style='content.TButton')
-		self.save_word_button.pack(side="right")
+		self.save_button = ttk.Button(self.add_container, text="Save", takefocus=0, command=self.save_word, style='content.TButton')
+		self.save_button.pack(side="right")
 
 		# Google translate button
 		self.google_img = ImageTk.PhotoImage(Image.open(GOOGLE_IMAGE).resize((25, 25), Image.LANCZOS))
-		self.google_button = ttk.Button(self.formContainer, image=self.google_img, takefocus=0, command=lambda: self.googleTranslate(), style='google.TButton')
+		self.google_button = ttk.Button(self.dict_form_container, image=self.google_img, takefocus=0, command=self.google_translate, style='google.TButton')
 
 		self.google_button.grid(row=1, column=2, sticky="nsew", padx=(6, 0), pady=(3, 4))
 
 
-	def generateSeqInfo(self, iData):
-		seqLabels = self.word_info_frame.pack_slaves()[:20]
-		seq = "" if iData == -1 else self.data[iData]["seq"]
-		seqSize = len(seq)
+	def set_db(self, db):
+		self.db = db
 
-		for i, v in enumerate(seqLabels):
-			if i < 20 - seqSize:
+
+	def generate_seq_info(self, i_data):
+		seq_labels = self.word_info_frame.pack_slaves()[:20]
+		seq = "" if i_data == -1 else self.data[i_data]["seq"]
+		seq_size = len(seq)
+
+		for i, label in enumerate(seq_labels):
+			if i < 20 - seq_size:
 				style = 'seqNull.TLabel'
 			else:
-				seqChar = seq[20 - seqSize - i]
-				style = 'seqBad.TLabel' if seqChar == '0' else 'seqMid.TLabel' if seqChar == '1' else 'seqGood.TLabel' if seqChar == '2' else 'seqNull.TLabel'
-			v.configure(style=style)
+				seq_char = seq[abs(20 - seq_size - i)]
+				style = 'seqBad.TLabel' if seq_char == '0' else 'seqMid.TLabel' if seq_char == '1' else 'seqGood.TLabel' if seq_char == '2' else 'seqNull.TLabel'
+			label.configure(style=style)
 
 
-	def googleTranslate(self):
-		w = self.word_entry.get().strip()
-		if w == "":
-			setLabelText(self.root, self.add_info, "Nothing to translate!", INFO_MSG_DELAY)
+	def google_translate(self):
+		word = self.word_entry.get().strip()
+		if word == "":
+			set_label_text(self.root, self.add_info, "Nothing to translate!", INFO_MSG_DELAY)
 			return
 
 		try:
-			t = TRANSLATOR.translate(w, src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
+			translation = TRANSLATOR.translate(word, src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
 		except:
-			setLabelText(self.root, self.add_info, "No internet connection!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.add_info, "No internet connection!", INFO_MSG_DELAY)
 			return
 
-		if t == "" or t == w:
-			setLabelText(self.root, self.add_info, "Sorry, can't translate!", INFO_MSG_DELAY)
+		if translation == "" or translation == word:
+			set_label_text(self.root, self.add_info, "Sorry, can't translate!", INFO_MSG_DELAY)
 			return
 
 		self.translation_entry.delete(0, END)
-		self.translation_entry.insert(0, t)
-		setLabelText(self.root, self.add_info, "Translated!", INFO_MSG_DELAY)
+		self.translation_entry.insert(0, translation)
+		set_label_text(self.root, self.add_info, "Translated!", INFO_MSG_DELAY)
 
 
-	def deleteWord(self, iData=-1):
-		if iData == -1:
-			setLabelText(self.root, self.add_info, "Can't delete word!", INFO_MSG_DELAY)
+	def delete_word(self, i_data=-1):
+		if i_data == -1:
+			set_label_text(self.root, self.add_info, "Can't delete word!", INFO_MSG_DELAY)
 			return
 
-		w = self.data[iData]["word"]
+		word = self.data[i_data]["word"]
 
-		self.db.execute('DELETE FROM ? WHERE id=?', LANG_FROM["token"], self.data[iData]["id"])
-		self.info.updateDictStatusInfo(-self.data[iData]["rating"], -1)
+		self.db.execute('DELETE FROM ? WHERE id=?', TABLE_NAME, self.data[i_data]["id"])
+		self.info.update_dict_status_info(-self.data[i_data]["rating"], -1)
 
-		del self.data[iData]
+		del self.data[i_data]
 
 		self.word_entry.state(["!disabled"])
-		self.clearAddForm()
+		self.clear_add_form()
 		self.word_entry.state(["disabled"])
 
 		self.rating_cbox.state(["!selected", "disabled"])
 
-		self.delete_word_button.configure(command=lambda: self.deleteWord())
-		self.delete_word_button.state(["!active", "disabled"])
+		self.delete_button.configure(command=self.delete_word)
+		self.delete_button.state(["!active", "disabled"])
 
-		self.save_word_button.state(["disabled"])
+		self.save_button.state(["disabled"])
 
-		self.generateSeqInfo(-1)
+		self.generate_seq_info(-1)
 		self.word_edit_rating["text"] = 0.0
-		self.word_edit_rating.configure(foreground=selectColor(0.0))
+		self.word_edit_rating.configure(foreground=select_color(0.0))
 
-		self.reloadDictionary()
-		self.clearAddForm()
+		self.reload_dictionary()
+		self.clear_add_form()
 		
-		setLabelText(self.root, self.add_info, "Word '" + w + "' deleted!", INFO_MSG_DELAY)
+		set_label_text(self.root, self.add_info, "Word '" + word + "' deleted!", INFO_MSG_DELAY)
 		self.root.focus()
 
 
-	def saveWord(self, iData=-1):
+	def save_word(self, i_data=-1):
+
 		word_to_add = self.word_entry.get().strip()
 		translate = self.translation_entry.get().strip()
-		add = self.additional_entry.get().strip()
+		variants = self.additional_entry.get().strip()
 
 		if any(not (c.isalpha() or c in " -") for c in word_to_add):
-			setLabelText(self.root, self.add_info, "Word: only letters!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.add_info, "Word: only letters or '-'!", INFO_MSG_DELAY)
 			return
 
 		if any(not (c.isalpha() or c in " -") for c in translate):
-			setLabelText(self.root, self.add_info, "Translation: only letters or '-'!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.add_info, "Translation: only letters or '-'!", INFO_MSG_DELAY)
 			return
 
-		if any(not (c.isalpha() or c in " -,") for c in add):
-			setLabelText(self.root, self.add_info, "Variants: only letters, '-' or ','!", INFO_MSG_DELAY)
+		if any(not (c.isalpha() or c in " -,") for c in variants):
+			set_label_text(self.root, self.add_info, "Variants: only letters, '-' or ','!", INFO_MSG_DELAY)
 			return
 
 		if word_to_add == "":
-			setLabelText(self.root, self.add_info, "Nothing to add!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.add_info, "Nothing to add!", INFO_MSG_DELAY)
 			return
 
-		if translate == "" and not add == "":
-			setLabelText(self.root, self.add_info, "Main translation required!", INFO_MSG_DELAY)
+		if translate == "" and not variants == "":
+			set_label_text(self.root, self.add_info, "Use main translation at first!", INFO_MSG_DELAY)
 			return
 
-		# Format user input for translation and variants
-		if not add == '':
-			add = ',' + ','.join([x.strip() for x in add.split(',')])
+		# Format user input of variants
+		if not variants == '':
+			variants = ',' + ','.join([variant.strip() for variant in variants.split(',')])
 
-		if iData == -1:
+		if i_data == -1:
 			# Add new word
-			for i in self.data:
-				if i["word"] == word_to_add:
-					setLabelText(self.root, self.add_info, "This word already in dictionary!", INFO_MSG_DELAY)
+			for entry in self.data:
+				if entry["word"] == word_to_add:
+					set_label_text(self.root, self.add_info, "This word already in dictionary!", INFO_MSG_DELAY)
 					return
 
-			id = self.db.execute('INSERT INTO ? (word, translation) VALUES(?,?)', LANG_FROM["token"], word_to_add, translate + add)
-			self.data.append(self.db.execute('SELECT * FROM ? WHERE id=?', LANG_FROM["token"], id)[0])
+			id = self.db.execute('INSERT INTO ? (word, translation) VALUES(?,?)', TABLE_NAME, word_to_add, translate + variants)
+			self.data.append(self.db.execute('SELECT * FROM ? WHERE id=?', TABLE_NAME, id)[0])
 			self.data.sort(key=lambda d: d['word'])
-			self.info.updateDictStatusInfo(0, 1)
+			self.info.update_dict_status_info(0, 1)
 		else:
 			# Update existed word
-			newTranslation = translate + add
-			resetRating = ', rating=0.0, seq=""' if self.rating_cbox.instate(['selected']) else ''
+			new_translation = translate + variants
+			# If selected rating reset option then add it to SQL query
+			reset_rating_cmd = ', rating=0.0, seq=""' if self.rating_cbox.instate(['selected']) else ''
 			if self.rating_cbox.instate(['selected']):
-				self.info.updateDictStatusInfo(-self.data[iData]["rating"], 0)
+				self.info.update_dict_status_info(-self.data[i_data]["rating"], 0)
 
-			self.db.execute('UPDATE ? SET translation=?' + resetRating + ' WHERE id=?', LANG_FROM["token"], newTranslation, self.data[iData]["id"])
-			self.data[iData].update({"translation": newTranslation})
+			self.db.execute('UPDATE ? SET translation=?' + reset_rating_cmd + ' WHERE id=?', TABLE_NAME, new_translation, self.data[i_data]["id"])
+			self.data[i_data].update({"translation": new_translation})
 
+			# If selected rating reset option
 			if self.rating_cbox.instate(['selected']):
-				# Refresh data
-				self.data[iData].update({"rating": 0.0, "seq": ""})
+				# Update data
+				self.data[i_data].update({"rating": 0.0, "seq": ""})
 				# Refresh UI
-				self.generateSeqInfo(iData)
-				self.word_edit_rating["text"] = self.data[iData]["rating"]
-				self.word_edit_rating.configure(foreground=selectColor(float(self.word_edit_rating["text"])))
+				self.generate_seq_info(i_data)
+				self.word_edit_rating["text"] = self.data[i_data]["rating"]
+				self.word_edit_rating.configure(foreground=select_color(float(self.word_edit_rating["text"])))
 				self.rating_cbox.state(["!selected"])
 
-		self.reloadDictionary()
+		self.reload_dictionary()
 
-		if iData == -1:
-			self.clearAddForm()
+		if i_data == -1:
+			self.clear_add_form()
 
-		operation = ("added" if iData == -1 else "updated")
-		setLabelText(self.root, self.add_info, "Word '" + word_to_add + "' " + operation + "!", INFO_MSG_DELAY)
+		operation = ("added" if i_data == -1 else "updated")
+		set_label_text(self.root, self.add_info, "Word '" + word_to_add + "' " + operation + "!", INFO_MSG_DELAY)
 
 
-	def clearAddForm(self):
+	def clear_add_form(self):
 		self.word_entry.delete(0,END)
 		self.translation_entry.delete(0,END)
 		self.additional_entry.delete(0,END)
 		self.word_entry.focus_set()
 
 	
-	def reloadDictionary(self):
+	def reload_dictionary(self):
 		self.DICT_LOADED = False
 		self.dict_table.pack_forget()
 		self.dict_table.delete(*self.dict_table.get_children())
-		threading.Thread(target = lambda: self.loadDictionary()).start()
-		# self.loadDictionary()
+		Thread(target = self.load_dictionary).start()
+
+
+	def reload_database(self):
+		self.dict_hint["text"] = "Reloading data from database..."
+
+		self.DICT_LOADED = False
+		self.dict_table.pack_forget()
+		self.dict_table.delete(*self.dict_table.get_children())
+
+		# Reconnect to DB
+		db = get_database()
+		for key, page in PAGES.items():
+			page.set_db(db)
+
+		self.data.clear()
+		self.data.extend(self.db.execute("SELECT * FROM ? ORDER BY word ASC", TABLE_NAME))
+
+		PAGES['dict'].set_dict_loaded(False)
+		self.load_dictionary()
+
+		self.info.update_dict_status_info()
+
+		self.dict_hint["text"] = "Completed!"
+		self.root.after(3000, lambda: self.dict_hint.configure(text="Double-click on row to edit entry"))
 		
 
-	def toggleTranslation(self, forceHide=False):
-		needShow = False if forceHide else self.reveal_button["text"] == "Show translation"
+	def toggle_translation(self, force_hide=False):
+		need_show = False if force_hide else self.reveal_button["text"] == "Show translation"
 		for i, (data, row) in enumerate(zip(self.data, self.dict_table.get_children())):
-			t = (data['translation']).split(',') if needShow else ["***", "***"]
-			self.dict_table.set(row, "translation", t[0])
-			variants = ', '.join(t[1:])
+			translations = (data['translation']).split(',') if need_show else ["***", "***"]
+			self.dict_table.set(row, "translation", translations[0])
+			variants = ', '.join(translations[1:])
 			self.dict_table.set(row, "variants", variants[:17] + "..." if len(variants) >= 20 else variants)
-		self.reveal_button["text"] = "Hide translation" if needShow else "Show translation"
+		self.reveal_button["text"] = "Hide translation" if need_show else "Show translation"
 
 
-	def toggleDictionary(self):
-		if self.dictContainer.winfo_viewable():
+	def toggle_dictionary(self):
+		if self.dict_container.winfo_viewable():
 			self.add_info["text"] = ""
 			self.word_entry.state(["!disabled"])
-			self.save_word_button.state(["!disabled"])
+			self.save_button.state(["!disabled"])
 			self.word_info_frame.grid_forget()
 			self.rating_cbox.grid_forget()
-			self.save_word_button.configure(text="Add", command=lambda: self.saveWord())
-			self.delete_word_button.configure(command=lambda: self.deleteWord())
-			self.delete_word_button.pack_forget()
-			self.clearAddForm()
-			self.toggleTranslation(True)
-			self.dictContainer.pack_forget()
-			self.formContainer.configure(padding=(0,60,0,0))
-			self.addContainer.pack(fill=BOTH, expand=True)
+			self.save_button.configure(text="Add", command=self.save_word)
+			self.delete_button.configure(command=self.delete_word)
+			self.delete_button.pack_forget()
+			self.clear_add_form()
+			self.toggle_translation(True)
+			self.dict_container.pack_forget()
+			self.dict_form_container.configure(padding=(0,60,0,0))
+			self.add_container.pack(fill=BOTH, expand=True)
 		else:
-			self.addContainer.pack_forget()
-			self.dictContainer.pack(fill=BOTH, expand=True)
-			self.onShown()
+			self.add_container.pack_forget()
+			self.dict_container.pack(fill=BOTH, expand=True)
+			self.on_shown()
 
 
-	def onShown(self):
+	def on_shown(self):
 		if not self.DICT_LOADED:
-			self.reloadDictionary()
+			self.reload_dictionary()
 
 
-	def loadDictionary(self):
+	def load_dictionary(self):
 		self.dict_hint["text"] = "Loading dictionary..."
-		total_words = len(self.data)
+		words_total = len(self.data)
 		for i, v in enumerate(self.data):
 			tag = 'evenrow' if i % 2 else 'oddrow'
 			self.dict_table.insert("", END, values=(i + 1, v["word"], "***", "***", v["rating"], v["id"]), tags = (tag,))
-			self.dict_hint["text"] = "Loading dictionary: " + f"{(i + 1) / total_words * 100:.1f}" + "%"
+			self.dict_hint["text"] = "Loading dictionary: " + f"{(i + 1) / words_total * 100:.1f}" + "%"
 		self.dict_hint["text"] = "Dictionary loaded!"
 		self.dict_table.pack(side="left", fill=BOTH, expand=1)
 		self.DICT_LOADED = True
-		self.root.after(3000, lambda: setLabelText(self.root, self.dict_hint, "Double-click on row to edit entry", 0))
+		self.root.after(3000, lambda: self.dict_hint.configure(text="Double-click on row to edit entry"))
 
 
-	def OnEntryDoubleClick(self, event):
+	def on_entry_double_click(self, event):
 		item = self.dict_table.identify('item', event.x, event.y)
 		if item:
-			self.editEntry(int(self.dict_table.item(item, "values")[0]) - 1)
+			self.edit_entry(int(self.dict_table.item(item, "values")[0]) - 1)
 
 
-	def editEntry(self, i):
+	def edit_entry(self, i):
 		translated = (self.data[i]['translation']).split(',')
 
-		self.toggleDictionary()
-		self.formContainer.configure(padding=(0,34,0,0))
-		self.save_word_button.configure(text="Update", command=lambda i=i: self.saveWord(i))
-		self.delete_word_button.pack(side="left", fill=Y, expand=True)
-		self.delete_word_button.configure(command=lambda: self.deleteWord(i))
-		self.delete_word_button.state(["!disabled"])
+		self.toggle_dictionary()
+		self.dict_form_container.configure(padding=(0,34,0,0))
+		self.save_button.configure(text="Update", command=lambda i=i: self.save_word(i))
+		self.delete_button.pack(side="left", fill=Y, expand=True)
+		self.delete_button.configure(command=lambda: self.delete_word(i))
+		self.delete_button.state(["!disabled"])
 
-		self.generateSeqInfo(i)
+		self.generate_seq_info(i)
 		self.word_info_frame.grid(row=0, column=1, sticky="nsew", padx=20, pady=(0, 4))
 		self.word_edit_rating["text"] = self.data[i]["rating"]
-		self.word_edit_rating.configure(foreground=selectColor(float(self.word_edit_rating["text"])))
+		self.word_edit_rating.configure(foreground=select_color(float(self.word_edit_rating["text"])))
 
 		self.rating_cbox.state(["!disabled"])
 		self.rating_cbox.state(["!selected"])
@@ -695,15 +747,15 @@ class DictPage:
 		return [self.dict_page, self.page_button]
 
 
-	def setDictLoaded(self, value):
+	def set_dict_loaded(self, value):
 		self.DICT_LOADED = value
 
 
 	def restart(self):
-		self.addContainer.pack_forget()
-		self.dictContainer.pack(fill=BOTH, expand=True)
-		self.toggleTranslation(True)
-		self.clearAddForm()
+		self.add_container.pack_forget()
+		self.dict_container.pack(fill=BOTH, expand=True)
+		self.toggle_translation(True)
+		self.clear_add_form()
 
 
 class ImportPage:
@@ -716,150 +768,172 @@ class ImportPage:
 		self.data = data
 		self.info = info_header
 		
-		self.page_button = generateButton(f_buttons, "import")
+		self.page_button = generate_button(f_buttons, "import")
 
 		self.import_page = ttk.Frame(f_content, style='content.TFrame')
 
 		# IMPORT PAGE
-		self.importContainer = ttk.Frame(self.import_page, padding=10, style='content.TFrame')
-		self.importContainer.pack(expand=1)
+		self.import_container = ttk.Frame(self.import_page, padding=10, style='content.TFrame')
+		self.import_container.pack(expand=1)
 
-		self.import_file_label = ttk.Label(self.importContainer, text="File: ", anchor="e", style='content.TLabel')
-		self.import_filepath = ttk.Entry(self.importContainer, font=(FONT_ENTRY, 12), justify="center", width=30)
-		self.import_browse_button = ttk.Button(self.importContainer, text="Browse", takefocus=0, command=self.browseFile, style='content.TButton')
-		self.import_minlen_label = ttk.Label(self.importContainer, text="Word min length: ", anchor="e", style='content.TLabel')
-		self.import_minlen = ttk.Entry(self.importContainer, width=5, font=(FONT_ENTRY, 12), justify="center")
-		self.import_translate_cbox = ttk.Checkbutton(self.importContainer, text="Autotranslate", takefocus=0, style='content.TCheckbutton')
-		self.import_proper_cbox = ttk.Checkbutton(self.importContainer, text="Skip proper names", takefocus=0, style='content.TCheckbutton')
-		self.import_start_button = ttk.Button(self.importContainer, text="Start", takefocus=0, command=self.importStart, style='content.TButton')
-		self.import_info = ttk.Label(self.importContainer, text="", style='info.TLabel')
-		
-		self.import_file_label.grid(row=0, column=0, sticky="nsew")
+		self.import_file_label = ttk.Label(self.import_container, text="File: ", anchor="e", style='content.TLabel')
+		self.import_filepath = ttk.Entry(self.import_container, font=(FONT_ENTRY, 12), justify="center", width=30)
+		self.import_browse_button = ttk.Button(self.import_container, text="Browse", takefocus=0, command=self.browse_file, style='content.TButton')
+		self.import_alphabet_label = ttk.Label(self.import_container, text="Alphabet: ", anchor="e", style='content.TLabel')
+		self.import_alphabet_combobox = ttk.Combobox(self.import_container, state="readonly", values=[x for x in ALPHABETS], takefocus=0, width=24, font=(FONT_ENTRY, 12, "bold"), justify="center")
+		self.import_minlen_label = ttk.Label(self.import_container, text="Word min length: ", anchor="e", style='content.TLabel')
+		self.import_minlen = ttk.Entry(self.import_container, width=8, font=(FONT_ENTRY, 12), justify="center")
+		self.import_autotranslate_cbox = ttk.Checkbutton(self.import_container, text=" Autotranslate", takefocus=0, style='content.TCheckbutton')
+		self.import_start_button = ttk.Button(self.import_container, text="Start", takefocus=0, command=self.start_import, style='content.TButton')
+		self.import_info = ttk.Label(self.import_container, text="", style='info.TLabel')
+
+		self.import_alphabet_combobox.set(self.import_alphabet_combobox["values"][0])
+		self.import_alphabet_combobox.bind('<<ComboboxSelected>>', lambda *args: self.import_alphabet_combobox.selection_clear())
+
+		self.import_file_label.grid(row=0, column=0, sticky="nsw", pady=10)
 		self.import_filepath.grid(row=0, column=1, sticky="nsew", pady=10, columnspan=2)
 		self.import_browse_button.grid(row=0, column=3, sticky="nsew", pady=10, padx=(2, 0))
-		self.import_minlen_label.grid(row=1, column=0, sticky="e", columnspan=2, padx=(48, 0))
-		self.import_minlen.grid(row=1, column=2, sticky="w", pady=10)
-		self.import_translate_cbox.grid(row=2, column=0, sticky="w", pady=10, columnspan=2, padx=(56, 0))
-		self.import_proper_cbox.grid(row=3, column=0, sticky="w", pady=10, columnspan=2, padx=(56, 0))
-		self.import_start_button.grid(row=3, column=3, sticky="nsew", pady=10)
-		self.import_info.grid(row=4, column = 0, pady=(10, 0), sticky="nsew", columnspan=4)
+		self.import_alphabet_label.grid(row=1, column=0, sticky="nsw", columnspan=2, pady=10)
+		self.import_alphabet_combobox.grid(row=1, column=1, sticky="nse", columnspan=2, pady=10)
+		self.import_minlen_label.grid(row=2, column=0, sticky="nsw", columnspan=2, pady=10)
+		self.import_minlen.grid(row=2, column=2, sticky="nsw", pady=10)
+		self.import_autotranslate_cbox.grid(row=3, column=0, sticky="nsew", columnspan=2, pady=(10, 20))
+		self.import_start_button.grid(row=3, column=3, sticky="nsew", pady=(10, 20))
+		self.import_info.grid(row=4, column = 0, sticky="nsew", columnspan=4)
 
 		# Important UI widgets list for enable/disable state while import processing
 		self.controls = [self.import_filepath, self.import_browse_button, self.import_minlen,
-					     self.import_translate_cbox, 
+					     self.import_autotranslate_cbox, self.import_alphabet_combobox,
 					     PAGES['exam'].get()[1], PAGES['dict'].get()[1]]
 
 
-	def browseFile(self):
+	def set_db(self, db):
+		self.db = db
+
+
+	def browse_file(self):
 		filepath = askopenfilename(initialdir=PWD)
 		if filepath:
 			self.import_filepath.delete(0, END)
 			self.import_filepath.insert(0, filepath)
 
 
-	def importStart(self):
+	def start_import(self):
 		self.STOP = False
 		filepath = self.import_filepath.get()
 		if filepath == '':
-			setLabelText(self.root, self.import_info, "Please, select file for import data!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.import_info, "Please, select file for import data!", INFO_MSG_DELAY)
 			return
 
 		if not os.access(filepath, os.R_OK):
-			setLabelText(self.root, self.import_info, "Can't open file!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.import_info, "Can't open file!", INFO_MSG_DELAY)
 			return
 
 		try:
 			if int(self.import_minlen.get()) < 1:
 				raise Exception()
 		except:
-			setLabelText(self.root, self.import_info, "Wrong length value!", INFO_MSG_DELAY)
+			set_label_text(self.root, self.import_info, "Wrong length value!", INFO_MSG_DELAY)
 			return
 
-		for i in self.controls:
-			i.state(["disabled"])
+		for element in self.controls:
+			element.state(["disabled"])
 		self.import_start_button["text"] = "Stop"
-		self.import_start_button.configure(command=self.stopping)
+		self.import_start_button.configure(command=self.abort_import)
 		self.import_info["text"] = "Processing..."
 
-		threading.Thread(target = self.importPayload, args = (filepath,)).start()
+		Thread(target = self.process_import, args = (filepath,)).start()
 
 
-	def stopping(self):
+	def abort_import(self):
 		self.STOP = True
 
 
-	def importPayload(self, filepath):
+	def process_import(self, filepath):
 		try:
 			# Temporary dict to store new words
-			tempdict = list()
-			with open(filepath, "r", encoding="UTF-8") as f:
-				print('test')
-				punctuation = ',.!?@#$%^&*()_+=\\/\'\"{}[]<>:;~`№|'
-				count = 0
-				for line in f:
-					print(len(line))
-					# Format string to remove any punctuations except dashes and create list
-					words = line.translate(str.maketrans('', '', punctuation)).split()
-					print(words)
-					for w in words:
-						# Interrupt process if stopped by user
+			temp_dict = list()
+			with open(filepath, "r", encoding="UTF-8") as file:
+
+				detector = AlphabetDetector()
+				words_count = 0
+				to_replace = ',.!?@#$%^&*()_+=\\/\'\"{}[]<>:;~`№|1234567890'
+				regex = re.compile('[%s]' % re.escape(to_replace))
+
+				for line in file:
+					words = regex.sub(' ', line).split()
+					for word in words:
 						if self.STOP:
 							self.import_info["text"] = "Aborted! No any words added."
-							self.importStop()
+							self.stop_import()
 							return
-						# Try to add only lowercase words w/o dashes
-						if w.islower() and w.isalpha() and len(w) >= int(self.import_minlen.get()):
-							if not w in [x['word'] for x in self.data] and not w in tempdict[::2]:
-								t = ""
-								if self.import_translate_cbox.instate(['selected']):
+
+						basic_conditions = len(word) >= int(self.import_minlen.get())
+						alpha_conditions = True
+						extra_conditions = True
+
+						abc_name = self.import_alphabet_combobox.get()
+
+						if not ALPHABETS[abc_name]['id'] == "ALL":
+							alpha_conditions = detector.only_alphabet_chars(word, ALPHABETS[abc_name]['id'])
+							if ALPHABETS[abc_name]['use_extra']:
+								extra_alpha_check = word.encode().isalpha() if ALPHABETS[abc_name]['use_encode'] else word.isalpha()
+								extra_conditions = word.islower() and extra_alpha_check
+
+						if basic_conditions and alpha_conditions and extra_conditions:
+							# In temp_dict stores words and translation one-by-one so need checks 1,3,5...etc. elements
+							if not word in [entry['word'] for entry in self.data] and not word in temp_dict[::2]:
+								translation = ""
+								if self.import_autotranslate_cbox.instate(['selected']):
 									try:
-										t = TRANSLATOR.translate(w, src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
+										translation = TRANSLATOR.translate(word, src=LANG_FROM["tag"], dest=LANG_TO["tag"]).text.lower()
 									except:
 										self.import_info["text"] = "Online translation error!"
-										self.importStop()
+										self.stop_import()
 										return
 
 									# Word ignores if googletrans returns same word as initial
-									if t == w:
+									if translation == word:
 										continue
 
-								tempdict.extend([w, t])
-								count += 1
-								self.import_info["text"] = "Processing... (" + str(count) + ")"
+								temp_dict.extend([word, translation])
+								words_count += 1
+								self.import_info["text"] = "Processing... (" + str(words_count) + ")"
 
-			self.import_info["text"] = "Finished! Added " + str(count) + " new words."
-			self.importStop(tempdict)
+			self.import_info["text"] = "Finished! Added " + str(words_count) + " new words."
+			self.stop_import(temp_dict)
+
 		except:
 			# If can't read file line after line
-			setLabelText(self.root, self.import_info, "Wrong file type", INFO_MSG_DELAY)
-			self.importStop()
+			set_label_text(self.root, self.import_info, "Wrong file type", INFO_MSG_DELAY)
+			self.stop_import()
 			return
 
 
-	def importStop(self, newWords=None):
+	def stop_import(self, new_words=None):
 		self.STOP = False
 
 		# If any non-empty list was given then
 		# add new words to database and refresh dict in memory
-		# Generating single SQL command to better performance.
-		# Not really sure, but expecting bugs if try to add toooooo much words at once
-		if newWords and len(newWords) > 0 and len(newWords) % 2 == 0:
-			cmd = 'INSERT INTO ? (word, translation) VALUES' + ' (?,?),' * (len(newWords) // 2)
-			self.db.execute(cmd[:-1], LANG_FROM["token"], *newWords)
+		# Generating single SQL command for better performance.
+		# Not really sure, but expecting problems if try to add toooooo much words at once
+		if new_words and len(new_words) > 0 and len(new_words) % 2 == 0:
+			cmd = 'INSERT INTO ? (word, translation) VALUES' + ' (?,?),' * (len(new_words) // 2)
+			self.db.execute(cmd[:-1], TABLE_NAME, *new_words)
 			self.data.clear()
-			self.data.extend(self.db.execute("SELECT * FROM ? ORDER BY word ASC", LANG_FROM["token"]))
+			self.data.extend(self.db.execute("SELECT * FROM ? ORDER BY word ASC", TABLE_NAME))
 
-			PAGES['dict'].setDictLoaded(False)
+			PAGES['dict'].set_dict_loaded(False)
 
-		self.info.updateDictStatusInfo()
+		self.info.update_dict_status_info()
 
-		for i in self.controls:
-			i.state(["!disabled"])
+		for element in self.controls:
+			element.state(["!disabled"])
 		self.import_start_button["text"] = "Start"
-		self.import_start_button.configure(command=self.importStart)
+		self.import_start_button.configure(command=self.start_import)
 
 
-	def onShown(self):
+	def on_shown(self):
 		self.restart()
 
 
@@ -871,12 +945,9 @@ class ImportPage:
 		self.import_filepath.delete(0, END)
 		self.import_minlen.delete(0, END)
 		self.import_minlen.insert(0, "2")
-		self.import_translate_cbox.state(["selected"])
-		self.import_translate_cbox.state(["!alternate"])
-		self.import_proper_cbox.state(["selected"])
-		self.import_proper_cbox.state(["!alternate"])
-		self.import_proper_cbox.state(["disabled"])
+		self.import_autotranslate_cbox.state(["!selected", "!alternate"])
 		self.import_info["text"] = ""
+		self.import_alphabet_combobox.set(self.import_alphabet_combobox["values"][0])
 
 
 class Header:
@@ -901,15 +972,15 @@ class Header:
 		self.dict_total_text.pack(side="left", fill=X, expand=1)
 		self.dict_total_count.pack(side="left", fill=X, expand=1)
 
-		self.setLangIndicator(LANG_FROM, LANG_TO)
-		self.updateDictStatusInfo()
+		self.update_lang_indicator(LANG_FROM, LANG_TO)
+		self.update_dict_status_info()
 		
 
-	def setLangIndicator(self, lang_from, lang_to):
+	def update_lang_indicator(self, lang_from, lang_to):
 		self.lang_indicator["text"] = lang_from["short"] + "/" + lang_to["short"]
 
 
-	def updateDictStatusInfo(self, rating_changed=0, words_changed=0):
+	def update_dict_status_info(self, rating_changed=0, words_changed=0):
 		if rating_changed or words_changed:
 			# Update on changed value
 			self.total_rating += rating_changed
@@ -927,41 +998,51 @@ class Header:
 		self.dict_progress_value["text"] = f'{calculated_rating:.2f}%'
 		
 
-def setLabelText(root, label, text="", time=0):
+def set_label_text(root, label, text="", time=0):
 	global INFO_CALLBACK
 	if INFO_CALLBACK:
 		root.after_cancel(INFO_CALLBACK)
 		INFO_CALLBACK = None
 	label["text"] = text
 	if time:
-		INFO_CALLBACK = root.after(time * 1000, lambda: setLabelText(root, label))
+		INFO_CALLBACK = root.after(time * 1000, lambda: set_label_text(root, label))
 
 
-def generateButton(root, text):
-	b = ttk.Button(root, text=text.upper(), takefocus=0, command=lambda t=text: showPage(t), style='page.TButton')
-	b.pack(fill=BOTH, expand=0, pady=(0, 2))
-	return b
+def generate_button(root, text):
+	button = ttk.Button(root, text=text.upper(), takefocus=0, command=lambda text=text: show_page(text), style='page.TButton')
+	button.pack(fill=BOTH, expand=0, pady=(0, 2))
+	return button
 
 
-def showPage(name):
-	for i in PAGES:
-		if PAGES[i].get()[0].winfo_viewable():
-			PAGES[i].get()[0].pack_forget()
-			PAGES[i].get()[1].state(["!disabled"])
-			PAGES[i].restart()
+def show_page(name):
+	for page in PAGES:
+		if PAGES[page].get()[0].winfo_viewable():
+			PAGES[page].get()[0].pack_forget()
+			PAGES[page].get()[1].state(["!disabled"])
+			PAGES[page].restart()
 			break
 	PAGES[name].get()[0].pack(fill=BOTH, expand=True)
 	PAGES[name].get()[1].state(["disabled", "!active"])
-	PAGES[name].onShown()
+	PAGES[name].on_shown()
 
 
-def selectColor(value):
+def select_color(value):
 	if value < 5.0: return COLOR_BAD
 	elif value < 10.0: return COLOR_LOW
 	elif value < 15.0: return COLOR_MID
 	elif value < 18.0: return COLOR_AVG
 	elif value == 20.0: return COLOR_TOP
 	else: return COLOR_GOOD
+
+
+def get_database():
+	if not os.access(PWD + DB_FILENAME, os.R_OK):
+		open(PWD + DB_FILENAME, 'w').close()
+	db = SQL("sqlite:///" + PWD + DB_FILENAME)
+	if len(db.execute('SELECT name FROM sqlite_master WHERE type="table" AND name=?', TABLE_NAME)) != 1:
+		# If not exist then create new one
+		db.execute('CREATE TABLE ? (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, word TEXT NOT NULL, translation TEXT DEFAULT "", rating REAL DEFAULT 0.0, seq TEXT DEFAULT "", info TEXT DEFAULT "")', TABLE_NAME)
+	return db
 
 
 if __name__ == '__main__':
