@@ -1,11 +1,10 @@
 import os
 import ctypes
-
-# pip install googletrans==3.1.0a0
 import googletrans
 
 
-# ===== CUSTOMIZE SECTION STARTS =====
+
+# vvvvv CUSTOMIZE SECTION STARTS vvvvv
 
 # LANGUAGE LIST - You can add any language, just use same dict template
 # Codes (tags) can be found on 'https://en.wikipedia.org/wiki/List_of_ISO_639-1_codes'
@@ -50,7 +49,7 @@ FONT_ENTRY     = "Cascadia Code"  # ENTRIES
 FONT_QUIZ_WORD = "Cascadia Code"  # QUIZ WORD
 FONT_SEQUENCE  = "Playbill"       # GUESS SEQUENCE
 
-# ====== CUSTOMIZE SECTION ENDS ======
+# ^^^^^^ CUSTOMIZE SECTION ENDS ^^^^^^
 
 WND_W = 700
 WND_H = 400
